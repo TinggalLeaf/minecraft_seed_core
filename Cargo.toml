@@ -1,0 +1,11 @@
+[package]
+name = "minecraft_seed_core"
+version = "0.1.0"
+edition = "2024"
+description = "纯 Rust 的 Minecraft Java 版种子计算核心库：群系生成（1.7–1.21）、结构定位、要塞、出生点估计与史莱姆区块。逐函数移植自 cubiomes（mcseedmap.com 的 WASM 后端），经 C 参考实现 golden 向量逐位验证。"
+license = "MIT"
+keywords = ["minecraft", "seed", "biomes", "worldgen", "cubiomes"]
+categories = ["algorithms", "game-development", "simulation"]
+readme = "README.md"
+
+[dependencies]
