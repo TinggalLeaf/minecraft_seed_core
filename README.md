@@ -1,8 +1,8 @@
 # minecraft_seed_core
 
-纯 Rust、零外部依赖的 Minecraft **Java 版**种子计算核心库。
+纯 Rust、零外部依赖的 Minecraft 种子计算核心库（**Java 版** + **Bedrock 版**）。
 
-本项目将 [cubiomes](https://github.com/Cubitect/cubiomes) —— [mcseedmap.com](https://mcseedmap.com) 的 WebAssembly 后端所使用的同一套 C 算法库 —— 逐函数移植为纯 Rust，并用 C 参考实现生成的 golden 向量做逐位验证。因此在本库覆盖的功能范围内，计算结果与 mcseedmap.com Web 端一致（mcseedmap 的 Bedrock 版走另一套逻辑，本库**不支持** Bedrock，见下文「已知限制」）。
+本项目将 [cubiomes](https://github.com/Cubitect/cubiomes) —— [mcseedmap.com](https://mcseedmap.com) 的 WebAssembly 后端所使用的同一套 C 算法库 —— 逐函数移植为纯 Rust，并用 C 参考实现生成的 golden 向量做逐位验证。因此在本库覆盖的功能范围内，计算结果与 mcseedmap.com Web 端一致。Bedrock 版走网站的另一套引擎（`bedrock.wasm`，MT19937 体系），已同样逐指令移植（`bedrock` 模块），见下文「Bedrock 版支持」。
 
 ## 功能矩阵
 
@@ -20,6 +20,8 @@
 | 出生点估计 `estimate_spawn` | 全支持版本 | 近似出生点；mcseedmap 显示的是 cubiomes `getSpawn`（含地表地形修正），与 `estimate_spawn` 最多差几十格，见下文「端到端验证」 |
 | 史莱姆区块 `is_slime_chunk` | 全支持版本 | Java 版规则，与版本无关 |
 | 废弃矿井 `get_mineshafts` | 全支持版本 | 含 1.13- 的距离衰减规则 |
+| **Bedrock** 结构散布 `bedrock::structures_in_regions` / `find_structures` | 1.16.0 – 26.50 | 20 种 `BeStructureType`，region 网格 + MT19937 偏移，与网站 wasm 逐点一致 |
+| **Bedrock** 出生点 `bedrock::get_spawn` / 要塞 `bedrock::get_strongholds` | 与版本无关 | 只用种子低 32 位；要塞角度含 wasm 定制的 musl 变体 sin/cos |
 
 版本枚举为 `McVersion::V1_7` … `McVersion::V1_21`（含 `V1_16_1`、`V1_19_2`、`V1_21_1`、`V1_21_3` 等细分项，对齐 cubiomes 的 `MCVersion`），`McVersion::name()` 给出如 `"1.18.2"` 的字符串。
 
@@ -89,11 +91,24 @@ golden 向量由 `reference/gen/` 下的 C 程序（`layervec.c`、`biomevec.c`�
 
 `tests/web_consistency.rs` 用**网站真实的 WASM 引擎**（`mcseedmap.com/workers/api.wasm`，即 cubiomes 的 Emscripten 编译产物）导出的输出做对拍：10 个版本 × 5 个种子的要塞坐标、64×64 群系区域（4096 个 id）、11 种结构的可行位置全部**逐一精确相等**；出生点在容差内（网站用 `getSpawn` 含地形修正，本库为 `estimate_spawn`）。重新生成 golden 的方法：`node reference/site/dump_golden.mjs`（需要先从网站下载最新的 `api.wasm`，详见 docs/INTEGRATION.md「与 mcseedmap.com 的端到端一致性验证」一节）。
 
+`tests/bedrock_consistency.rs` 用网站的 Bedrock 引擎（`workers/bedrock.wasm`）做对拍：13 个版本 × 7 个种子的出生点、3 座要塞、15 种结构的 region 散布列表、全部配置表快照与 MT19937 原始向量全部**逐一精确相等**。重新生成 golden：`node reference/site/dump_bedrock_golden.mjs`。
+
+## Bedrock 版支持
+
+Bedrock 模块（`minecraft_seed_core::bedrock`）与 Java 版是两套独立算法：
+
+- 随机源为标准 **MT19937**，且出生点/要塞只用种子**低 32 位**（与版本无关）；结构散布的 region 种子用完整 64 位种子 + salt + region 坐标线性组合（wrapping i64），MT 初始化取其低 32 位；
+- 版本分派只体现在结构配置表：village / ocean_ruin / shipwreck 在 1.18+（mc>17）换用新配置；
+- 版本枚举为 `BedrockVersion::V1_16_0` … `V26_50`（对应网站 wasm 的 mcVersion 14…28），`BedrockVersion::name()` 给出 `"1.21.50"` 等字符串；
+- `bedrock::get_config` 给出 spacing/separation/salt/mt_count 配置；`structures_in_regions`（以原点为中心 ±range region）与 `find_structures`（以任意方块坐标为中心）返回全部候选位置；`get_spawn` / `get_strongholds` 与网站输出逐位一致（要塞的 sin/cos 是 wasm 内嵌 musl 变体的逐指令移植，见 `src/bedrock/trig.rs`）。
+
+Bedrock 侧**未实现**：带群系过滤的 `be_get_filtered_structures_in_regions`（网站自身也未使用，其 Bedrock 群系底图直接复用 Java 引擎渲染）；Bedrock 独立群系生成器（不存在于网站引擎中）。
+
 ## 已知限制
 
 以下功能 cubiomes 有而本库**未移植**（对接时请勿依赖）：
 
-- **Bedrock 版**：mcseedmap 的 Bedrock 使用另一套算法，本库只覆盖 Java 版。
+- **Bedrock 带群系过滤的结构定位**（`be_get_filtered_structures_in_regions`）：网站自身未使用（Bedrock 群系底图复用 Java 引擎），本库同样未实现；非过滤版已完整覆盖。
 - `getSpawn` 精确出生点（依赖地表高度近似噪声管线）；本库提供 `estimate_spawn` 近似值。
 - `isViableStructureTerrain` / `isViableEndCityTerrain` 等地形级可行性检查：本库的 viability 只做群系层面判定。
 - 结构部件生成：`getEndCityPieces` / `getFortressPieces` / 村庄 `getHouseList`。

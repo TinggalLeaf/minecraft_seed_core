@@ -273,7 +273,7 @@ let slime = is_slime_chunk(seed, x >> 4, z >> 4); // 区块坐标，与版本无
 
 以下逐项以源码为准；对接时**不要**依赖：
 
-1. **Bedrock 版**：mcseedmap.com 的 Bedrock 走另一套独立逻辑（非 cubiomes），本库只覆盖 Java 版。所有 `McVersion` 均为 Java 版本号。
+1. **Bedrock 带群系过滤版结构定位**：`bedrock` 模块已实现网站的非过滤版全部功能（结构散布/出生点/要塞，见 README「Bedrock 版支持」）；带群系过滤的 `be_get_filtered_structures_in_regions` 网站自身未使用，故未实现。Bedrock 群系底图在网站上就是复用 Java 引擎渲染的，直接用本库 Java 版 `Generator` 即可。`McVersion` 均为 Java 版本号，Bedrock 版本用 `bedrock::BedrockVersion`。
 2. **精确出生点 `getSpawn`**：依赖 `SurfaceNoise` 与 `mapApproxHeight`（generator.c 的地表高度近似），噪声管线未移植。只有 `estimate_spawn` 近似值。
 3. **地形级 viability**：`isViableStructureTerrain` / `isViableEndCityTerrain` 未移植。本库 viability 只做群系层面判定（及 cubiomes 自带的随机性判定），**不**保证地形上真的能生成（如海底神殿的实际海床形状）。
 4. **结构部件生成**：`getEndCityPieces` / `getFortressPieces` / 村庄 `getHouseList` 未移植。`get_variant` 只给朝向/起始部件/包围盒。

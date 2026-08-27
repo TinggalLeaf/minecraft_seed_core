@@ -1,5 +1,18 @@
 # Bedrock 引擎逆向分析与移植计划
 
+> **状态：移植已完成（2026-08）。** `src/bedrock/` 全部子模块已实现，
+> `tests/bedrock_consistency.rs` 对 91 组用例 + 配置表 + MT 向量逐位对拍全绿，
+> `cargo clippy --all-targets -- -D warnings` 无警告。本文档保留为逆向侦察档案。
+>
+> 移植期澄清的关键结论（修正下文的「待澄清」标注）：
+> - `be_mt_n_get(seed: i64, n: i32)` 返回 **malloc 出的 n 个 i32 输出数组的指针**
+>   （标准 MT19937，种子取低 32 位）；dump 脚本已修正，`mt_vectors` 现为真实输出序列。
+> - **spawn 不做群系评估**：func24 实际只是 `MT(seed_lo)` 两次输出
+>   `(mt[i] & 511) - 256`；下文第 7 节关于「spawn 需要分层群系评估」的推断不成立
+>   （该分层代码存在于 wasm 中但服务于 filtered 版结构过滤，网站未使用）。
+> - 要塞的 sin/cos 是 wasm 内嵌的 **musl 变体**（`__rem_pio2` 常量表被截断定制），
+>   已逐指令移植到 `src/bedrock/trig.rs`；不能用 Rust std 的 sin/cos 替代。
+
 > 本文档是 Bedrock 支持的交接文档：记录对 mcseedmap.com Bedrock 引擎
 > （`bedrock.wasm`）的全部侦察结论、已解码的数据表与移植计划。
 > 下次继续时按「移植计划」一节执行即可。
