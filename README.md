@@ -11,7 +11,7 @@
 | 主世界群系 | Beta 1.7 – 1.21.4 | Beta 1.7- 气候噪声（温度/湿度 64×64 表）+ 地形列噪声海洋判定；B1.8–1.17 分层 LayerStack；1.18+ 多噪声 + 群系搜索树 |
 | 下界群系 | 1.16.1 – 1.21.4 | 多噪声；更早版本按 cubiomes 行为填充 `nether_wastes` |
 | 末地群系 | 1.9 – 1.21.4 | simplex 高地噪声；更早版本填充 `the_end` |
-| 群系 scale 1（1:1） | 主世界全部支持版本、下界 1.16.1+ | B1.7- 由 beta 噪声路径直接生成（支持任意 2 的幂 scale）；B1.8–1.17 走 voronoi 缩放；末地 scale 1 未移植（调用会 panic） |
+| 群系 scale 1（1:1） | 主世界全部支持版本、下界 1.16.1+ | B1.7- 由 beta 噪声路径直接生成（支持任意 2 的幂 scale）；B1.8–1.17 走 voronoi 缩放；末地 scale 1 已支持 |
 | large biomes 世界类型 | 主世界 B1.8 及以后 | `Generator::with_large_biomes(true)`（B1.7- 无此世界类型） |
 | 结构候选定位 `get_structure_pos` | 按结构类型见 `get_config` | 25 种 `StructureType` 的 spacing/separation/salt 配置表全版本快照验证 |
 | 结构群系可行性 `is_viable_structure_pos` | B1.8 及以后 | 含 B1.8–1.17 的粗层剪枝模拟与 1.18+ 的变体采样点；B1.7- 不可用（C 同样只做了一半，调用会 panic） |
@@ -26,6 +26,7 @@
 | 四连底座高速搜索 `structure::quadbase` | 按结构类型见 `get_config` | 四连小屋/海底神殿等连体式底座判定（`is_quad_base*`）、region 扫描（`scan_for_quads`）、全 48 位多线程找种（`search_all48`）、AFK 站位（`get_optimal_afk`）；C 的文件断点续传外壳未移植 |
 | 史莱姆区块 `is_slime_chunk` | 全支持版本 | Java 版规则，与版本无关 |
 | 废弃矿井 `get_mineshafts` | 全支持版本 | 含 1.13- 的距离衰减规则 |
+| 种子搜索 `search::find_biomes` / `find_structures` / `find_biomes_with_structure` | 1.7 – 1.21.4 | 与网站 find_biomes/find_structures 语义逐一精确一致（含 48+16 位打包返回值） |
 | **Bedrock** 结构散布 `bedrock::structures_in_regions` / `find_structures` | 1.16.0 – 26.50 | 20 种 `BeStructureType`，region 网格 + MT19937 偏移，与网站 wasm 逐点一致 |
 | **Bedrock** 出生点 `bedrock::get_spawn` / 要塞 `bedrock::get_strongholds` | 与版本无关 | 只用种子低 32 位；要塞角度含 wasm 定制的 musl 变体 sin/cos |
 
@@ -118,7 +119,7 @@ Bedrock 模块（`minecraft_seed_core::bedrock`）与 Java 版是两套独立算
 
 - ~~Bedrock 带群系过滤的结构定位~~：已实现（`bedrock::structures_in_regions_filtered`，含 54 层群系层栈；网站自身未启用此版，仅为算法完整性移植）。
 - 末地群系的 scale 1（1:1 voronoi 平面缩放）：调用会 panic。
-- `biomfilter.c`（群系过滤器）—— 找种级批量工具（四连底座搜索 `quadbase.c` 已移植，见功能矩阵）。
+- ~~`biomfilter.c`~~：cubiomes master 本身没有此文件（属 cubiomes-viewer）；已由 `search` 模块覆盖网站实际提供的种子搜索能力（find_biomes / find_structures / find_biomes_with_structure，与网站 api.wasm 对拍一致）。
 - Alpha 1.1 及更早版本（`McVersion` 下界为 Beta 1.7，对齐 cubiomes 的 `MC_B1_7`）。
 
 此外注意：`Generator::gen_biomes` 在未调用 `with_seed`、B1.8–1.17 主世界 `scale` 不是 1/4/16/64/256（B1.7- 接受任意 2 的幂）、或末地 `scale == 1` 时会 panic；`get_config` 对版本不支持的结构返回 `None`；`get_structure_pos` 对该 region 不生成的情况返回 `None`。

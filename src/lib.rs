@@ -29,6 +29,7 @@ pub mod rng;
 pub mod version;
 pub mod noise;
 pub mod generator;
+pub mod search;
 pub mod structure;
 
 pub use biome::BiomeId;

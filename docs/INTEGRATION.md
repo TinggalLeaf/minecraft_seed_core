@@ -12,6 +12,7 @@
 | `noise` | `PerlinNoise`、`OctaveNoise`、`DoublePerlinNoise`、`BiomeNoise`、`SurfaceNoise`、`beta`（`BiomeNoiseBeta`/`SurfaceNoiseBeta`/`get_old_beta_biome`） | `noise.c` / `biomenoise.c` |
 | `generator` | `Generator`、`Range`，按版本分派（beta 气候噪声 / `layers` / `v1_18` / `nether` / `end` / `voronoi`），`map_approx_height` 地表高度近似（`ApproxHeight`） | `generator.c` / `layers.c` |
 | `structure` | `StructureType`、`get_config`、`get_structure_pos`、`is_viable_structure_pos`、`get_variant`、`StrongholdIter`、`estimate_spawn`、`get_spawn`、`is_viable_structure_terrain`、`is_viable_end_city_terrain`、`is_end_chunk_empty`、`get_linked_gateway_chunk`、`get_linked_gateway_pos`、`is_slime_chunk` 等 | `finders.c` / `finders.h` |
+| `search` | `find_biomes`、`find_structures`、`find_biomes_with_structure`、`BiomeSet` | 网站 `api.wasm` 的 find_* 导出（func130/105/104） |
 
 crate 根部 re-export：`BiomeId`、`Generator`、`Range`、`StructureType`、`Dimension`、`McVersion`。
 
@@ -92,13 +93,12 @@ let vol = g.gen_biomes(Range::new(4, -64, -64, 128, 128).with_y(-64 >> 2, 96 >> 
 
 - `Dimension::Overworld`：全版本支持（Beta 1.7–1.21）。B1.7- 走气候噪声路径（`noise::beta`），scale 支持任意 2 的幂；B1.8–1.17 走分层层栈，scale 支持 1/4/16/64/256。
 - `Dimension::Nether`：1.16.1+ 真实多噪声；**1.15 及更早**不报错，整个区域填充 `BiomeId::NetherWastes`（与 cubiomes 行为一致）。scale 支持 1/4/16/64/256（`scale <= 0` 视为 4）。
-- `Dimension::End`：1.9+ simplex 高地噪声；**1.8 及更早**填充 `BiomeId::TheEnd`。scale 支持 4/16/64/256 及更大；**scale 1 未移植，调用 panic**。
+- `Dimension::End`：1.9+ simplex 高地噪声；**1.8 及更早**填充 `BiomeId::TheEnd`。scale 支持 1/4/16/64/256 及更大。
 
 ### Panics（调用方需要避免的输入）
 
 - 未调用 `with_seed` 就 `gen_biomes` / `get_biome`。
 - B1.8–1.17 主世界 `scale` 不是 1/4/16/64/256（B1.7- 接受任意 2 的幂，其他值 panic）。
-- 末地 `scale == 1`。
 - `StrongholdIter::next` 在 B1.8–1.19.2 传 `None`（需要主世界生成器做群系检查）。
 - `is_viable_structure_pos` 用于 B1.7- 主世界（C 对 beta 只做了半成品支持，这里同样不可用）。
 
@@ -285,6 +285,71 @@ let slime = is_slime_chunk(seed, x >> 4, z >> 4); // 区块坐标，与版本无
 - `estimate_spawn` 是**近似**出生点：B1.8–1.17 在 ±256 方块内伪随机选取可行群系位置（找不到退回 `(8, 8)`）；1.18+ 做气候参数适应度搜索（`findFittestPos`）；B1.7- 恒为 `(0, 0)`（与 C 一致）。只是 `get_spawn` 的第一阶段，不需要精确值时更便宜。
 - `is_slime_chunk` 只依赖种子与区块坐标，纯 Java 版规则。
 
+## 种子搜索（`search` 模块）
+
+对齐 mcseedmap.com `api.wasm` 的三个搜索导出，与网站逐一对拍
+（`tests/web_search_consistency.rs`，86 用例）。
+
+### `find_biomes`
+
+```rust
+use minecraft_seed_core::search::find_biomes;
+use minecraft_seed_core::{Dimension, McVersion};
+
+// 1.20.6：从种子 0 起，找第一个 (0,0) 处 1×1（scale-4）为平原的种子
+let seed = find_biomes(
+    McVersion::V1_20, Dimension::Overworld,
+    &[1],          // 群系 id（BiomeId as i32）
+    0, 0, 1, 1,    // x, z, 宽, 高（scale-4 群系坐标）
+    320,           // 方块高度（内部 /4）
+    0,             // 起始种子（含），向上扫描
+);
+assert_eq!(seed, 9);
+```
+
+- 语义：返回第一个让区域内**包含全部请求群系**的种子（含起始种子）。
+- 请求 id 经网站 `f_uc` 的类别扩展解析（`search::BiomeSet`，掩码表逐 id
+  dump 自网站 wasm）；某些 id 的掩码含多个位（如 44 暖洋 → bit 44）。
+- 怪癖复刻：掩码位按 mod 64 回绕（wasm 移位语义），id ≥ 128 走第二个掩码字。
+- **搜索无上限**：永不收敛的输入（如不可能的群系组合、该版本不存在的群系）
+  会无限扫描——调用方应自行加超时/上限。
+
+### `find_structures`（48 位基值 + 高 16 位两段式）
+
+```rust
+use minecraft_seed_core::search::find_structures;
+use minecraft_seed_core::StructureType;
+
+// 找种子：region (0,0) 的村庄候选落在原点 ±16 方块内，且群系可行
+let full_seed = find_structures(
+    McVersion::V1_20, Dimension::Overworld,
+    StructureType::Village,
+    0, 0,   // 中心方块坐标
+    16,     // 半径（方块，含边界）
+    0,      // 起始 48 位基值
+);
+```
+
+- 结构位置只由种子低 48 位决定 → 外层扫基值 `h`；群系可行性需要完整种子 →
+  内层扫高 16 位 `k`。返回值 = `(k << 48) | h`（网站的 findStructures 返回的
+  就是这种打包大数值）。
+- 只检查 **region (0,0)** 的候选（与网站一致）。
+- 结构在该 region 不生成（稀有度）时自动跳过。
+
+### `find_biomes_with_structure`
+
+`find_structures` 的结构条件 + 以 `(x, z)` 为中心、±`range` 方块的 scale-4
+正方形区域须包含全部请求群系（`y_height / 4` 采样），同一完整种子同时满足。
+返回打包种子。
+
+### 对照表
+
+| 网站 WASM 导出 | 本库 |
+| --- | --- |
+| `find_biomes` (func130) | `search::find_biomes` |
+| `find_structures` (func105) | `search::find_structures` |
+| `find_biomes_with_structure` (func104) | `search::find_biomes_with_structure` |
+
 ## 错误与边界语义汇总
 
 | 情况 | 行为 |
@@ -374,12 +439,12 @@ let slime = is_slime_chunk(seed, x >> 4, z >> 4); // 区块坐标，与版本无
    `get_end_city_pieces` / `get_fortress_pieces` / `get_house_list`，
    见 `tests/bundle_c_golden.rs` 与「结构部件生成」小节）。
    `get_variant` 只给朝向/起始部件/包围盒。
-5. **末地 scale 1**：`genEndScaled` 的 1:1 voronoi 平面缩放（`mapVoronoi114`/`mapVoronoiPlane` 的末地路径）未移植，`gen_biomes` 在末地 `scale == 1` 时 panic。末地其他 scale（4/16/64/…）正常。
+5. ~~**末地 scale 1**~~（已移植：`mapVoronoi114`/`mapVoronoiPlane` 末地路径，`gen_biomes` 末地 scale 1 正常，golden 见 `tests/bundle_a_golden.rs`）。
 6. ~~**`quadbase.c`**~~（已移植：`structure::quadbase` 模块，四连小屋/海底神殿
    底座判定、`scan_for_quads`、`search_all48`、`get_optimal_afk`，见
    「四连底座高速搜索（quadbase）」小节与 `tests/bundle_d_golden.rs`。
    未移植的仅 C 的文件输出/断点续传外壳）。
-7. **`biomfilter.c`**：群系过滤器（按条件批量筛种子）未移植。可用 `gen_biomes` 区域生成自行实现。
+7. ~~**`biomfilter.c`**~~（已由 `search` 模块取代）：注意 cubiomes master 本身没有 `biomfilter.c`（它属于 cubiomes-viewer）；本库按 mcseedmap.com 的 `api.wasm` 实际导出移植了种子搜索三件套 `search::find_biomes` / `find_structures` / `find_biomes_with_structure`，与网站逐一对拍（`tests/web_search_consistency.rs`，86 用例）。cubiomes-viewer 的通用过滤器表达式引擎不在范围内。
 8. ~~**Beta 1.7 及更早版本**~~（已移植：`McVersion` 下界扩展为 `B1_7`
    （对齐 cubiomes 的 `MC_B1_7`），主世界群系走 `noise::beta` 气候噪声 +
    海洋判定，`map_approx_height` 有 beta 分支，出生点/要塞/结构配置的
