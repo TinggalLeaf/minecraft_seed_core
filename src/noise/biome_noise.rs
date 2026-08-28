@@ -18,8 +18,6 @@
 //!
 //! ## 未覆盖
 //!
-//! - `setClimateParaSeed` / `sampleClimatePara`（单气候参数调试初始化，
-//!   cubiomes viewer 用）未移植；本库只支持 `setBiomeSeed` 的完整初始化。
 //! - Beta 1.7 的 `BiomeNoiseBeta` 系列不属于本模块（1.18+ 范围之外）。
 //!
 //! ## 浮点精确性
@@ -386,6 +384,9 @@ pub struct BiomeNoise {
     /// spline 根节点下标（`initBiomeNoise` 的 `bn->sp`）。
     sp: u32,
     mc: crate::version::McVersion,
+    /// `setClimateParaSeed` 记录的当前调试参数（`bn->nptype`）；
+    /// [`BiomeNoise::set_biome_seed`] 完整初始化后无含义（为 `NP_MAX`）。
+    nptype: usize,
 }
 
 impl BiomeNoise {
@@ -429,6 +430,7 @@ impl BiomeNoise {
             splines: ss,
             sp,
             mc,
+            nptype: NP_MAX,
         }
     }
 
@@ -453,7 +455,96 @@ impl BiomeNoise {
         }
     }
 
-    /// `sampleBiomeNoise` 的噪声采样部分：返回 6 个 ×10000 定点气候值
+    /// `setClimateParaSeed`：单气候参数调试初始化（cubiomes viewer 用）。
+    ///
+    /// 只初始化指定参数的气候噪声：`nptype == NP_DEPTH` 时初始化
+    /// continentalness / erosion / weirdness 三个（depth 由它们经 spline
+    /// 算出）；否则只初始化 `climate[nptype]`。`nmax > 0` 时限制每个
+    /// DoublePerlin 的 octave 数（`xDoublePerlinInit` 的调试截断，
+    /// 结果不再与游戏一致）。
+    ///
+    /// 注意 C 中 `NP_SHIFT == NP_DEPTH == 4`，此 API 无法单独初始化 shift
+    /// （与 C 一致，`nptype == 4` 走 depth 分支）。
+    pub fn set_climate_para_seed(&mut self, seed: u64, large: bool, nptype: usize, nmax: i32) {
+        let mut pxr = Xoroshiro::new(seed);
+        let xlo = pxr.next_long();
+        let xhi = pxr.next_long();
+
+        let init = |bn: &mut BiomeNoise, np: usize| {
+            let spec = climate_spec(np, large);
+            let mut pxr = Xoroshiro::from_state(xlo ^ spec.salt_lo, xhi ^ spec.salt_hi);
+            bn.climate[np] = DoublePerlinNoise::new_xoroshiro(&mut pxr, spec.amps, spec.omin, nmax);
+        };
+        if nptype == NP_DEPTH {
+            init(self, NP_CONTINENTALNESS);
+            init(self, NP_EROSION);
+            init(self, NP_WEIRDNESS);
+        } else {
+            init(self, nptype);
+        }
+        self.nptype = nptype;
+    }
+
+    /// `sampleClimatePara` 的 depth 分支（不要求 [`BiomeNoise`] 处于
+    /// `nptype == NP_DEPTH` 调试模式）：`isViableStructureTerrain` 在
+    /// 完整初始化的噪声上采样 depth 用的就是这套计算（C 中通过临时改写
+    /// `bn.nptype` 实现，这里拆成独立方法避免可变状态）。
+    ///
+    /// 坐标为 1:4 群系比例（`f64`，支持小数）。y 恒为 0（与 C 一致）。
+    pub fn sample_depth(&self, x: f64, z: f64) -> f64 {
+        let (_, _, d, _) = self.depth_parts(x, z);
+        d as f64
+    }
+
+    /// depth 分支的公共计算：`(continentalness, erosion, depth, weirdness)`。
+    fn depth_parts(&self, x: f64, z: f64) -> (f32, f32, f32, f32) {
+        let c = self.climate[NP_CONTINENTALNESS].sample(x, 0.0, z) as f32;
+        let e = self.climate[NP_EROSION].sample(x, 0.0, z) as f32;
+        let w = self.climate[NP_WEIRDNESS].sample(x, 0.0, z) as f32;
+
+        let np_param = [
+            c,
+            e,
+            -3.0 * ((w.abs() - 0.6666667).abs() - 0.33333334),
+            w,
+        ];
+        let off = self.splines.eval(self.sp, &np_param) + 0.015;
+        // C: float d = 1.0 - (y * 4) / 128.0 - 83.0/160.0 + off（y == 0，
+        // double 计算，off 为 float 提升），最后窄化为 float。
+        // y == 0 时中间项恒为 0.0，1.0 - 0.0 == 1.0（按位等价）。
+        let d = (1.0 - 83.0 / 160.0 + off as f64) as f32;
+        (c, e, d, w)
+    }
+
+    /// `sampleClimatePara`：采样 [`BiomeNoise::set_climate_para_seed`]
+    /// 选择的单个气候参数。坐标为 1:4 群系比例（`f64`，支持小数）。
+    ///
+    /// 返回采样值本身（depth 时为 `f32` 结果提升的 `f64`）。`np` 非
+    /// `None` 时写入对应下标的 ×10000 定点值：depth 分支写
+    /// `np[2..=5]`（continentalness/erosion/depth/weirdness），其余分支
+    /// 写 `np[nptype]`；其它下标保持不变。
+    ///
+    /// depth 分支的 y 恒为 0（C 中硬编码 `int y = 0`）。
+    pub fn sample_climate_para(&self, np: Option<&mut [i64; NP_MAX]>, x: f64, z: f64) -> f64 {
+        if self.nptype == NP_DEPTH {
+            let (c, e, d, w) = self.depth_parts(x, z);
+            if let Some(np) = np {
+                np[2] = (10000.0f32 * c) as i64;
+                np[3] = (10000.0f32 * e) as i64;
+                np[4] = (10000.0f32 * d) as i64;
+                np[5] = (10000.0f32 * w) as i64;
+            }
+            return d as f64;
+        }
+        let p = self.climate[self.nptype].sample(x, 0.0, z);
+        if let Some(np) = np {
+            // C: (int64_t)(10000.0F*p)，float 常量提升为 double 相乘
+            np[self.nptype] = (10000.0 * p) as i64;
+        }
+        p
+    }
+
+
     /// `[temperature, humidity, continentalness, erosion, depth, weirdness]`。
     ///
     /// 坐标为 1:4 群系比例。`flags` 见 [`SAMPLE_NO_SHIFT`] /

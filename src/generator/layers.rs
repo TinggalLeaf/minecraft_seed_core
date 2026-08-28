@@ -1,4 +1,4 @@
-//! 1.7–1.17 主世界分层（LayerStack）群系生成，移植自 cubiomes
+//! B1.8–1.17 主世界分层（LayerStack）群系生成，移植自 cubiomes
 //! `layers.c` / `layers.h` 与 `generator.c` 的 `setupLayerStack`。
 //!
 //! ## 结构对应
@@ -20,13 +20,18 @@
 //! - 注意 `mapLand` 中 C 的 `case forest:` / `v != forest` 里的 `forest`（4）
 //!   在 1.7+ 链中实际匹配的是温度分类 `Freezing`（同为 4）——群系 ID 与
 //!   温度分类在中间层共享数值空间，移植时保留该语义。
+//! - `mapVoronoi114` 的核心算法抽出为
+//!   [`crate::generator::voronoi::map_voronoi_114_plane`]（末地 1.9–1.14
+//!   的 scale 1 路径共用）。C 把结果写进 `out` 之后的暂存区再 `memmove`
+//!   回来；循环覆盖全部输出格，直接写 `out` 等价。
+//! - `mapOceanMixMod`（generator.c 的 `FORCE_OCEAN_VARIANTS` 路径）移植为
+//!   纯混合函数 [`map_ocean_mix_mod`] + 区域入口
+//!   [`LayerStack::gen_area_ocean_mix_mod`]（scale 16/64/256）。
 //! - `mapOceanTemp` 的 Perlin 采样把世界 `(x, z)` 映射到噪声的 `(d1, d2)`
 //!   轴（即噪声 "y" 轴是世界 z），按 C 原样保留。
 //! - C 的 `mapVoronoi`（1.15+）先把父层数据写进 `out` 再移到暂存区，
 //!   `mapVoronoiPlane` 覆盖不到的边缘输出格（逐点查询且 `(x-4) mod 4 ∈
 //!   {2,3}` 时会出现）残留的是父层数据而非 0；本实现逐位复刻该行为。
-//!   （`mapVoronoi114` 的暂存 `buf` 在 C 中是未初始化内存，但在
-//!   `genBiomes`/`allocCache` 的 calloc 路径下恒为 0，故按 0 复刻。）
 
 use crate::biome::{
     are_similar, get_category, get_mutated, is_deep_ocean, is_mesa, is_oceanic,
@@ -36,6 +41,7 @@ use crate::noise::perlin::PerlinNoise;
 use crate::rng::java::JavaRandom;
 use crate::rng::seed::{chunk_seed, first_int, first_is_zero, layer_salt, start_salt, step_seed};
 use crate::version::McVersion;
+use crate::version::McVersion::{V1_0, V1_6, V1_7};
 
 use super::voronoi::{get_voronoi_sha, map_voronoi_plane};
 use super::Range;
@@ -79,6 +85,7 @@ const BEACH: i32 = BiomeId::Beach as i32;
 const DESERT_HILLS: i32 = BiomeId::DesertHills as i32;
 const WOODED_HILLS: i32 = BiomeId::WoodedHills as i32;
 const TAIGA_HILLS: i32 = BiomeId::TaigaHills as i32;
+const MOUNTAIN_EDGE: i32 = BiomeId::MountainEdge as i32;
 const JUNGLE: i32 = BiomeId::Jungle as i32;
 const JUNGLE_HILLS: i32 = BiomeId::JungleHills as i32;
 const JUNGLE_EDGE: i32 = BiomeId::JungleEdge as i32;
@@ -220,7 +227,7 @@ impl Default for Layer {
     }
 }
 
-/// 层栈（对应 C `LayerStack`），1.7–1.17 主世界群系生成。
+/// 层栈（对应 C `LayerStack`），B1.8–1.17 主世界群系生成。
 #[derive(Clone, Debug)]
 pub struct LayerStack {
     layers: Vec<Layer>,
@@ -241,12 +248,13 @@ pub struct LayerStack {
 }
 
 impl LayerStack {
-    /// `setupLayerStack`：按版本组装 1.7–1.17 的层链。
+    /// `setupLayerStack`：按版本组装 B1.8–1.17 的层链。
     ///
     /// `large_biomes` 对应 C 的 `LARGE_BIOMES` 标志（额外两级 zoom，
-    /// 1.7 的河流链也额外两级）。
+    /// 1.7 的河流链也额外两级）；1.3 之前该标志被忽略（同 C）。
     pub fn new(mc: McVersion, large_biomes: bool) -> Self {
-        debug_assert!((McVersion::V1_7..=McVersion::V1_17).contains(&mc));
+        debug_assert!((McVersion::B1_8..=McVersion::V1_17).contains(&mc));
+        let large_biomes = large_biomes && mc >= McVersion::V1_3;
         let mut layers = vec![Layer::default(); L_NUM];
 
         // `setupLayer`：返回层索引以便链式引用
@@ -271,94 +279,231 @@ impl LayerStack {
             };
 
         use LayerId as L;
-        // ---- 1.7+ 主链（`setupLayerStack` 的 `else` 分支）----
-        let mut p = setup(&mut layers, L::Continent4096, map_continent, 1, None, None);
-        p = setup(&mut layers, L::Zoom2048, map_zoom_fuzzy, 2000, Some(p), None);
-        p = setup(&mut layers, L::Land2048, map_land, 1, Some(p), None);
-        p = setup(&mut layers, L::Zoom1024, map_zoom, 2001, Some(p), None);
-        p = setup(&mut layers, L::Land1024A, map_land, 2, Some(p), None);
-        p = setup(&mut layers, L::Land1024B, map_land, 50, Some(p), None);
-        p = setup(&mut layers, L::Land1024C, map_land, 70, Some(p), None);
-        p = setup(&mut layers, L::Island1024, map_island, 2, Some(p), None);
-        p = setup(&mut layers, L::Snow1024, map_snow, 2, Some(p), None);
-        p = setup(&mut layers, L::Land1024D, map_land, 3, Some(p), None);
-        p = setup(&mut layers, L::Cool1024, map_cool, 2, Some(p), None);
-        p = setup(&mut layers, L::Heat1024, map_heat, 2, Some(p), None);
-        p = setup(&mut layers, L::Special1024, map_special, 3, Some(p), None);
-        p = setup(&mut layers, L::Zoom512, map_zoom, 2002, Some(p), None);
-        p = setup(&mut layers, L::Zoom256, map_zoom, 2003, Some(p), None);
-        p = setup(&mut layers, L::Land256, map_land, 4, Some(p), None);
-        p = setup(&mut layers, L::Mushroom256, map_mushroom, 5, Some(p), None);
-        p = setup(&mut layers, L::DeepOcean256, map_deep_ocean, 4, Some(p), None);
-        p = setup(&mut layers, L::Biome256, map_biome, 200, Some(p), None);
-        if mc >= McVersion::V1_14 {
-            p = setup(&mut layers, L::Bamboo256, map_bamboo, 1001, Some(p), None);
-        }
-        p = setup(&mut layers, L::Zoom128, map_zoom, 1000, Some(p), None);
-        p = setup(&mut layers, L::Zoom64, map_zoom, 1001, Some(p), None);
-        setup(&mut layers, L::BiomeEdge64, map_biome_edge, 1000, Some(p), None);
-        // 河流噪声链，同时驱动 hills 的判定
-        p = setup(
-            &mut layers,
-            L::RiverInit256,
-            map_noise,
-            100,
-            Some(L::DeepOcean256 as usize),
-            None,
-        );
-
-        // hills 分支的两级 zoom：1.12- 盐为 0（startSalt/startSeed 保持 0，
-        // 对应 C 注释 "Pre 1.13 the Hills branch stays zero-initialized"）
-        let (hs1, hs2) = if mc <= McVersion::V1_12 {
-            (0, 0)
+        // 旧版栈的陆地扩张函数（C 的 `map_land` 变量）
+        let map_land_fn: MapFn = if mc == McVersion::B1_8 {
+            map_land_b18
+        } else if mc <= McVersion::V1_6 {
+            map_land16
         } else {
-            (1000, 1001)
+            map_land
         };
-        p = setup(&mut layers, L::Zoom128Hills, map_zoom, hs1, Some(p), None);
-        p = setup(&mut layers, L::Zoom64Hills, map_zoom, hs2, Some(p), None);
 
-        // ---- 1.7+ 尾链 ----
-        p = setup(
-            &mut layers,
-            L::Hills64,
-            map_hills,
-            1000,
-            Some(L::BiomeEdge64 as usize),
-            Some(p),
-        );
-        p = setup(&mut layers, L::Sunflower64, map_sunflower, 1001, Some(p), None);
-        p = setup(&mut layers, L::Zoom32, map_zoom, 1000, Some(p), None);
-        p = setup(&mut layers, L::Land32, map_land, 3, Some(p), None);
-        p = setup(&mut layers, L::Zoom16, map_zoom, 1001, Some(p), None);
-        p = setup(&mut layers, L::Shore16, map_shore, 1000, Some(p), None);
-        p = setup(&mut layers, L::Zoom8, map_zoom, 1002, Some(p), None);
-        p = setup(&mut layers, L::Zoom4, map_zoom, 1003, Some(p), None);
-        if large_biomes {
-            p = setup(&mut layers, L::ZoomLargeA, map_zoom, 1004, Some(p), None);
-            p = setup(&mut layers, L::ZoomLargeB, map_zoom, 1005, Some(p), None);
+        let mut p;
+        if mc == McVersion::B1_8 {
+            // ---- Beta 1.8 主链（注意 Continent4096 槽位实际是 1:8192）----
+            p = setup(&mut layers, L::Continent4096, map_continent, 1, None, None);
+            p = setup(&mut layers, L::Zoom4096, map_zoom_fuzzy, 2000, Some(p), None);
+            p = setup(&mut layers, L::Land4096, map_land_fn, 1, Some(p), None);
+            p = setup(&mut layers, L::Zoom2048, map_zoom, 2001, Some(p), None);
+            p = setup(&mut layers, L::Land2048, map_land_fn, 2, Some(p), None);
+            p = setup(&mut layers, L::Zoom1024, map_zoom, 2002, Some(p), None);
+            p = setup(&mut layers, L::Land1024A, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Zoom512, map_zoom, 2003, Some(p), None);
+            p = setup(&mut layers, L::Land512, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Zoom256, map_zoom, 2004, Some(p), None);
+            p = setup(&mut layers, L::Land256, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Biome256, map_biome, 200, Some(p), None);
+            p = setup(&mut layers, L::Zoom128, map_zoom, 1000, Some(p), None);
+            p = setup(&mut layers, L::Zoom64, map_zoom, 1001, Some(p), None);
+            // 河流噪声链，同时驱动 hills 的判定
+            setup(
+                &mut layers,
+                L::RiverInit256,
+                map_noise,
+                100,
+                Some(L::Land256 as usize),
+                None,
+            );
+        } else if mc <= McVersion::V1_6 {
+            // ---- 1.0–1.6 主链 ----
+            p = setup(&mut layers, L::Continent4096, map_continent, 1, None, None);
+            p = setup(&mut layers, L::Zoom2048, map_zoom_fuzzy, 2000, Some(p), None);
+            p = setup(&mut layers, L::Land2048, map_land_fn, 1, Some(p), None);
+            p = setup(&mut layers, L::Zoom1024, map_zoom, 2001, Some(p), None);
+            p = setup(&mut layers, L::Land1024A, map_land_fn, 2, Some(p), None);
+            p = setup(&mut layers, L::Snow1024, map_snow16, 2, Some(p), None);
+            p = setup(&mut layers, L::Zoom512, map_zoom, 2002, Some(p), None);
+            p = setup(&mut layers, L::Land512, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Zoom256, map_zoom, 2003, Some(p), None);
+            p = setup(&mut layers, L::Land256, map_land_fn, 4, Some(p), None);
+            p = setup(&mut layers, L::Mushroom256, map_mushroom, 5, Some(p), None);
+            p = setup(&mut layers, L::Biome256, map_biome, 200, Some(p), None);
+            p = setup(&mut layers, L::Zoom128, map_zoom, 1000, Some(p), None);
+            p = setup(&mut layers, L::Zoom64, map_zoom, 1001, Some(p), None);
+            // 河流噪声链，同时驱动 hills 的判定
+            setup(
+                &mut layers,
+                L::RiverInit256,
+                map_noise,
+                100,
+                Some(L::Mushroom256 as usize),
+                None,
+            );
+        } else {
+            // ---- 1.7+ 主链（`setupLayerStack` 的 `else` 分支）----
+            p = setup(&mut layers, L::Continent4096, map_continent, 1, None, None);
+            p = setup(&mut layers, L::Zoom2048, map_zoom_fuzzy, 2000, Some(p), None);
+            p = setup(&mut layers, L::Land2048, map_land_fn, 1, Some(p), None);
+            p = setup(&mut layers, L::Zoom1024, map_zoom, 2001, Some(p), None);
+            p = setup(&mut layers, L::Land1024A, map_land_fn, 2, Some(p), None);
+            p = setup(&mut layers, L::Land1024B, map_land_fn, 50, Some(p), None);
+            p = setup(&mut layers, L::Land1024C, map_land_fn, 70, Some(p), None);
+            p = setup(&mut layers, L::Island1024, map_island, 2, Some(p), None);
+            p = setup(&mut layers, L::Snow1024, map_snow, 2, Some(p), None);
+            p = setup(&mut layers, L::Land1024D, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Cool1024, map_cool, 2, Some(p), None);
+            p = setup(&mut layers, L::Heat1024, map_heat, 2, Some(p), None);
+            p = setup(&mut layers, L::Special1024, map_special, 3, Some(p), None);
+            p = setup(&mut layers, L::Zoom512, map_zoom, 2002, Some(p), None);
+            p = setup(&mut layers, L::Zoom256, map_zoom, 2003, Some(p), None);
+            p = setup(&mut layers, L::Land256, map_land_fn, 4, Some(p), None);
+            p = setup(&mut layers, L::Mushroom256, map_mushroom, 5, Some(p), None);
+            p = setup(&mut layers, L::DeepOcean256, map_deep_ocean, 4, Some(p), None);
+            p = setup(&mut layers, L::Biome256, map_biome, 200, Some(p), None);
+            if mc >= McVersion::V1_14 {
+                p = setup(&mut layers, L::Bamboo256, map_bamboo, 1001, Some(p), None);
+            }
+            p = setup(&mut layers, L::Zoom128, map_zoom, 1000, Some(p), None);
+            p = setup(&mut layers, L::Zoom64, map_zoom, 1001, Some(p), None);
+            setup(&mut layers, L::BiomeEdge64, map_biome_edge, 1000, Some(p), None);
+            // 河流噪声链，同时驱动 hills 的判定
+            p = setup(
+                &mut layers,
+                L::RiverInit256,
+                map_noise,
+                100,
+                Some(L::DeepOcean256 as usize),
+                None,
+            );
         }
-        setup(&mut layers, L::Smooth4, map_smooth, 1000, Some(p), None);
 
-        // 河流链
-        p = setup(
-            &mut layers,
-            L::Zoom128River,
-            map_zoom,
-            1000,
-            Some(L::RiverInit256 as usize),
-            None,
-        );
-        p = setup(&mut layers, L::Zoom64River, map_zoom, 1001, Some(p), None);
-        p = setup(&mut layers, L::Zoom32River, map_zoom, 1000, Some(p), None);
-        p = setup(&mut layers, L::Zoom16River, map_zoom, 1001, Some(p), None);
-        p = setup(&mut layers, L::Zoom8River, map_zoom, 1002, Some(p), None);
-        p = setup(&mut layers, L::Zoom4River, map_zoom, 1003, Some(p), None);
-        if large_biomes && mc == McVersion::V1_7 {
-            p = setup(&mut layers, L::ZoomLRiverA, map_zoom, 1004, Some(p), None);
-            p = setup(&mut layers, L::ZoomLRiverB, map_zoom, 1005, Some(p), None);
+        // hills 分支的两级 zoom：1.0- 不存在；1.12- 盐为 0（startSalt/
+        // startSeed 保持 0，对应 C 注释 "Pre 1.13 the Hills branch stays
+        // zero-initialized"）
+        if mc <= McVersion::V1_0 {
+            // p 保持 Zoom64（不参与 hills）
+        } else if mc <= McVersion::V1_12 {
+            p = setup(&mut layers, L::Zoom128Hills, map_zoom, 0, Some(L::RiverInit256 as usize), None);
+            setup(&mut layers, L::Zoom64Hills, map_zoom, 0, Some(p), None);
+        } else {
+            p = setup(&mut layers, L::Zoom128Hills, map_zoom, 1000, Some(p), None);
+            setup(&mut layers, L::Zoom64Hills, map_zoom, 1001, Some(p), None);
         }
-        p = setup(&mut layers, L::River4, map_river, 1, Some(p), None);
-        setup(&mut layers, L::Smooth4River, map_smooth, 1000, Some(p), None);
+
+        if mc <= McVersion::V1_0 {
+            // ---- B1.8/1.0 尾链（无 hills、无 SwampRiver；
+            // 注意 Shore16 槽位实际是 1:32）----
+            p = setup(&mut layers, L::Zoom32, map_zoom, 1000, Some(L::Zoom64 as usize), None);
+            p = setup(&mut layers, L::Land32, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Shore16, map_shore, 1000, Some(p), None);
+            p = setup(&mut layers, L::Zoom16, map_zoom, 1001, Some(p), None);
+            p = setup(&mut layers, L::Zoom8, map_zoom, 1002, Some(p), None);
+            p = setup(&mut layers, L::Zoom4, map_zoom, 1003, Some(p), None);
+            setup(&mut layers, L::Smooth4, map_smooth, 1000, Some(p), None);
+
+            // 河流链
+            p = setup(
+                &mut layers,
+                L::Zoom128River,
+                map_zoom,
+                1000,
+                Some(L::RiverInit256 as usize),
+                None,
+            );
+            p = setup(&mut layers, L::Zoom64River, map_zoom, 1001, Some(p), None);
+            p = setup(&mut layers, L::Zoom32River, map_zoom, 1002, Some(p), None);
+            p = setup(&mut layers, L::Zoom16River, map_zoom, 1003, Some(p), None);
+            p = setup(&mut layers, L::Zoom8River, map_zoom, 1004, Some(p), None);
+            p = setup(&mut layers, L::Zoom4River, map_zoom, 1005, Some(p), None);
+            p = setup(&mut layers, L::River4, map_river, 1, Some(p), None);
+            setup(&mut layers, L::Smooth4River, map_smooth, 1000, Some(p), None);
+        } else if mc <= McVersion::V1_6 {
+            // ---- 1.1–1.6 尾链 ----
+            p = setup(
+                &mut layers,
+                L::Hills64,
+                map_hills,
+                1000,
+                Some(L::Zoom64 as usize),
+                Some(L::Zoom64Hills as usize),
+            );
+            p = setup(&mut layers, L::Zoom32, map_zoom, 1000, Some(p), None);
+            p = setup(&mut layers, L::Land32, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Zoom16, map_zoom, 1001, Some(p), None);
+            p = setup(&mut layers, L::Shore16, map_shore, 1000, Some(p), None);
+            p = setup(&mut layers, L::SwampRiver16, map_swamp_river, 1000, Some(p), None);
+            p = setup(&mut layers, L::Zoom8, map_zoom, 1002, Some(p), None);
+            p = setup(&mut layers, L::Zoom4, map_zoom, 1003, Some(p), None);
+            if large_biomes {
+                p = setup(&mut layers, L::ZoomLargeA, map_zoom, 1004, Some(p), None);
+                p = setup(&mut layers, L::ZoomLargeB, map_zoom, 1005, Some(p), None);
+            }
+            setup(&mut layers, L::Smooth4, map_smooth, 1000, Some(p), None);
+
+            // 河流链
+            p = setup(
+                &mut layers,
+                L::Zoom128River,
+                map_zoom,
+                1000,
+                Some(L::RiverInit256 as usize),
+                None,
+            );
+            p = setup(&mut layers, L::Zoom64River, map_zoom, 1001, Some(p), None);
+            p = setup(&mut layers, L::Zoom32River, map_zoom, 1002, Some(p), None);
+            p = setup(&mut layers, L::Zoom16River, map_zoom, 1003, Some(p), None);
+            p = setup(&mut layers, L::Zoom8River, map_zoom, 1004, Some(p), None);
+            p = setup(&mut layers, L::Zoom4River, map_zoom, 1005, Some(p), None);
+            if large_biomes {
+                p = setup(&mut layers, L::ZoomLRiverA, map_zoom, 1006, Some(p), None);
+                p = setup(&mut layers, L::ZoomLRiverB, map_zoom, 1007, Some(p), None);
+            }
+            p = setup(&mut layers, L::River4, map_river, 1, Some(p), None);
+            setup(&mut layers, L::Smooth4River, map_smooth, 1000, Some(p), None);
+        } else {
+            // ---- 1.7+ 尾链 ----
+            p = setup(
+                &mut layers,
+                L::Hills64,
+                map_hills,
+                1000,
+                Some(L::BiomeEdge64 as usize),
+                Some(L::Zoom64Hills as usize),
+            );
+            p = setup(&mut layers, L::Sunflower64, map_sunflower, 1001, Some(p), None);
+            p = setup(&mut layers, L::Zoom32, map_zoom, 1000, Some(p), None);
+            p = setup(&mut layers, L::Land32, map_land_fn, 3, Some(p), None);
+            p = setup(&mut layers, L::Zoom16, map_zoom, 1001, Some(p), None);
+            p = setup(&mut layers, L::Shore16, map_shore, 1000, Some(p), None);
+            p = setup(&mut layers, L::Zoom8, map_zoom, 1002, Some(p), None);
+            p = setup(&mut layers, L::Zoom4, map_zoom, 1003, Some(p), None);
+            if large_biomes {
+                p = setup(&mut layers, L::ZoomLargeA, map_zoom, 1004, Some(p), None);
+                p = setup(&mut layers, L::ZoomLargeB, map_zoom, 1005, Some(p), None);
+            }
+            setup(&mut layers, L::Smooth4, map_smooth, 1000, Some(p), None);
+
+            // 河流链
+            p = setup(
+                &mut layers,
+                L::Zoom128River,
+                map_zoom,
+                1000,
+                Some(L::RiverInit256 as usize),
+                None,
+            );
+            p = setup(&mut layers, L::Zoom64River, map_zoom, 1001, Some(p), None);
+            p = setup(&mut layers, L::Zoom32River, map_zoom, 1000, Some(p), None);
+            p = setup(&mut layers, L::Zoom16River, map_zoom, 1001, Some(p), None);
+            p = setup(&mut layers, L::Zoom8River, map_zoom, 1002, Some(p), None);
+            p = setup(&mut layers, L::Zoom4River, map_zoom, 1003, Some(p), None);
+            if large_biomes && mc == McVersion::V1_7 {
+                p = setup(&mut layers, L::ZoomLRiverA, map_zoom, 1004, Some(p), None);
+                p = setup(&mut layers, L::ZoomLRiverB, map_zoom, 1005, Some(p), None);
+            }
+            p = setup(&mut layers, L::River4, map_river, 1, Some(p), None);
+            setup(&mut layers, L::Smooth4River, map_smooth, 1000, Some(p), None);
+        }
 
         setup(
             &mut layers,
@@ -422,18 +567,41 @@ impl LayerStack {
         let (entry_16, entry_64, entry_256) = if large_biomes {
             (
                 L::Zoom4 as usize,
-                L::Shore16 as usize,
-                L::Sunflower64 as usize,
+                if mc <= McVersion::V1_6 {
+                    L::SwampRiver16 as usize
+                } else {
+                    L::Shore16 as usize
+                },
+                if mc <= McVersion::V1_6 {
+                    L::Hills64 as usize
+                } else {
+                    L::Sunflower64 as usize
+                },
             )
-        } else {
+        } else if mc >= McVersion::V1_1 {
             (
-                L::Shore16 as usize,
-                L::Sunflower64 as usize,
+                if mc <= McVersion::V1_6 {
+                    L::SwampRiver16 as usize
+                } else {
+                    L::Shore16 as usize
+                },
+                if mc <= McVersion::V1_6 {
+                    L::Hills64 as usize
+                } else {
+                    L::Sunflower64 as usize
+                },
                 if mc <= McVersion::V1_14 {
                     L::Biome256 as usize
                 } else {
                     L::Bamboo256 as usize
                 },
+            )
+        } else {
+            // B1.8/1.0：没有 hills/swampRiver 层
+            (
+                L::Zoom16 as usize,
+                L::Zoom64 as usize,
+                L::Biome256 as usize,
             )
         };
 
@@ -495,9 +663,34 @@ impl LayerStack {
         get_map(self, entry, &mut out, x, z, w, h);
         out
     }
+
+    /// `setupGenerator` 的 `FORCE_OCEAN_VARIANTS` 分支（generator.c 的
+    /// `mapOceanMixMod` 接线）：1.13+ 的海洋变体在 scale 16/64/256 入口
+    /// 生效（scale 1/4 不受该标志影响），把对应入口的陆地输出与海洋温度
+    /// 链按 [`map_ocean_mix_mod`] 混合。
+    ///
+    /// # Panics
+    ///
+    /// `mc < 1.13`（海洋链未构建）或 `scale` 不是 16/64/256。
+    pub fn gen_area_ocean_mix_mod(&self, scale: i32, x: i32, z: i32, w: i32, h: i32) -> Vec<i32> {
+        assert!(
+            self.layers[LayerId::OceanTemp256 as usize].mc >= McVersion::V1_13,
+            "FORCE_OCEAN_VARIANTS 要求 mc >= 1.13"
+        );
+        let ocean_entry = match scale {
+            16 => LayerId::Zoom16Ocean as usize,
+            64 => LayerId::Zoom64Ocean as usize,
+            256 => LayerId::OceanTemp256 as usize,
+            _ => panic!("FORCE_OCEAN_VARIANTS 只替换 scale 16/64/256 的入口层"),
+        };
+        let land_entry = self.entry_for_scale(scale).unwrap();
+        let land = self.gen_area(land_entry, x, z, w, h);
+        let ocean = self.gen_area(ocean_entry, x, z, w, h);
+        map_ocean_mix_mod(&land, &ocean)
+    }
 }
 
-/// `genBiomes` 的旧版主世界分支（mc 1.7–1.17, `DIM_OVERWORLD`）。
+/// `genBiomes` 的旧版主世界分支（mc B1.8–1.17, `DIM_OVERWORLD`）。
 ///
 /// 旧版主世界没有垂直噪声：C 中 `y` 被完全忽略，生成 2D 平面后沿 y
 /// 逐层复制（`for (k = 1; k < r.sy; k++) memcpy`），这里同样处理。
@@ -817,6 +1010,191 @@ fn map_land(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32
     }
 }
 
+/// `mapLand16`（1.0–1.6 的 `mapAddIsland` 等价物）。
+///
+/// 与 1.7+ 的 [`map_land`] 逻辑同构，差异：
+/// - 竞争生长的"陆地"值固定为 1（此阶段没有温度分类）；
+/// - 海洋化判定结果为 `ocean`（若原值是 `snowy_tundra` 则 `frozen_ocean`），
+///   而非恒 `ocean`；没有 `v != forest`（温度分类 Freezing）的特判。
+fn map_land16(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
+    let l = &ls.layers[idx];
+    let (pbuf, pw) = parent_area(ls, l, x, z, w, h);
+    let (st, ss) = (l.start_salt, l.start_seed);
+    let pwu = pw as usize;
+
+    for j in 0..h as usize {
+        let (row0, row1, row2) = (j * pwu, (j + 1) * pwu, (j + 2) * pwu);
+        let mut v00 = pbuf[row0];
+        let mut vt0 = pbuf[row0 + 1];
+        let mut v02 = pbuf[row2];
+        let mut vt2 = pbuf[row2 + 1];
+
+        for i in 0..w as usize {
+            let v11 = pbuf[row1 + i + 1];
+            let v20 = pbuf[row0 + i + 2];
+            let v22 = pbuf[row2 + i + 2];
+            let mut v = v11;
+
+            if v11 != 0 || (v00 == 0 && v20 == 0 && v02 == 0 && v22 == 0) {
+                // 陆地格（或全海区域）：四角有海洋时 1/5 概率缩小为海洋
+                if v11 != 0 && (v00 == 0 || v20 == 0 || v02 == 0 || v22 == 0) {
+                    let cs = chunk_seed(ss, i as i32 + x, j as i32 + z);
+                    if first_is_zero(cs, 5) {
+                        v = if v == SNOWY_TUNDRA { FROZEN_OCEAN } else { OCEAN };
+                    }
+                }
+            } else {
+                // 海洋格且四角有陆地：竞争生长（与 map_land 相同的抽签序列）
+                let mut cs = chunk_seed(ss, i as i32 + x, j as i32 + z);
+                let mut inc = 0;
+                v = 1;
+
+                if v00 != OCEAN {
+                    inc += 1;
+                    v = v00;
+                    cs = step_seed(cs, st);
+                }
+                if v20 != OCEAN {
+                    inc += 1;
+                    if inc == 1 || first_is_zero(cs, 2) {
+                        v = v20;
+                    }
+                    cs = step_seed(cs, st);
+                }
+                if v02 != OCEAN {
+                    inc += 1;
+                    match inc {
+                        1 => v = v02,
+                        2 => {
+                            if first_is_zero(cs, 2) {
+                                v = v02;
+                            }
+                        }
+                        _ => {
+                            if first_is_zero(cs, 3) {
+                                v = v02;
+                            }
+                        }
+                    }
+                    cs = step_seed(cs, st);
+                }
+                if v22 != OCEAN {
+                    inc += 1;
+                    match inc {
+                        1 => v = v22,
+                        2 => {
+                            if first_is_zero(cs, 2) {
+                                v = v22;
+                            }
+                        }
+                        3 => {
+                            if first_is_zero(cs, 3) {
+                                v = v22;
+                            }
+                        }
+                        _ => {
+                            if first_is_zero(cs, 4) {
+                                v = v22;
+                            }
+                        }
+                    }
+                    cs = step_seed(cs, st);
+                }
+
+                if !first_is_zero(cs, 3) {
+                    v = if v == SNOWY_TUNDRA { FROZEN_OCEAN } else { OCEAN };
+                }
+            }
+
+            out[i + j * w as usize] = v;
+            v00 = vt0;
+            vt0 = v20;
+            v02 = vt2;
+            vt2 = v22;
+        }
+    }
+}
+
+/// `mapLandB18`（Beta 1.8 的陆地扩张/收缩，0/1 二值）。
+fn map_land_b18(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
+    let l = &ls.layers[idx];
+    let (pbuf, pw) = parent_area(ls, l, x, z, w, h);
+    let ss = l.start_seed;
+    let pwu = pw as usize;
+
+    for j in 0..h as usize {
+        let (row0, row1, row2) = (j * pwu, (j + 1) * pwu, (j + 2) * pwu);
+        let mut v00 = pbuf[row0];
+        let mut vt0 = pbuf[row0 + 1];
+        let mut v02 = pbuf[row2];
+        let mut vt2 = pbuf[row2 + 1];
+
+        for i in 0..w as usize {
+            let v11 = pbuf[row1 + i + 1];
+            let v20 = pbuf[row0 + i + 2];
+            let v22 = pbuf[row2 + i + 2];
+            let mut v = v11;
+
+            if v11 == 0 && (v00 != 0 || v02 != 0 || v20 != 0 || v22 != 0) {
+                // 海洋邻接陆地：1/3 概率扩张（firstInt(3)/2 → 0 或 1）
+                let cs = chunk_seed(ss, i as i32 + x, j as i32 + z);
+                v = first_int(cs, 3) / 2;
+            } else if v11 == 1 && (v00 != 1 || v02 != 1 || v20 != 1 || v22 != 1) {
+                // 陆地邻接海洋：1/5 概率收缩（1 - firstInt(5)/4）
+                let cs = chunk_seed(ss, i as i32 + x, j as i32 + z);
+                v = 1 - first_int(cs, 5) / 4;
+            }
+
+            out[i + j * w as usize] = v;
+            v00 = vt0;
+            vt0 = v20;
+            v02 = vt2;
+            vt2 = v22;
+        }
+    }
+}
+
+/// `mapSnow16`（1.0–1.6）：陆地按 1/5 概率标记为 `snowy_tundra`，否则
+/// `plains`（海洋格保持 `ocean`）。
+fn map_snow16(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
+    let l = &ls.layers[idx];
+    let (pbuf, pw) = parent_area(ls, l, x, z, w, h);
+    let ss = l.start_seed;
+    let pwu = pw as usize;
+
+    for j in 0..h as usize {
+        for i in 0..w as usize {
+            let mut v11 = pbuf[i + 1 + (j + 1) * pwu];
+            if v11 != OCEAN {
+                let cs = chunk_seed(ss, i as i32 + x, j as i32 + z);
+                v11 = if first_is_zero(cs, 5) { SNOWY_TUNDRA } else { PLAINS };
+            }
+            out[i + j * w as usize] = v11;
+        }
+    }
+}
+
+/// `mapSwampRiver`（1.1–1.6）：沼泽 1/6、丛林（含丛林丘陵）1/8 概率变河流。
+fn map_swamp_river(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
+    let l = &ls.layers[idx];
+    get_map(ls, l.p.unwrap(), out, x, z, w, h);
+    let ss = l.start_seed;
+
+    for j in 0..h {
+        for i in 0..w {
+            let o = (i + j * w) as usize;
+            let v = out[o];
+            if v != SWAMP && v != JUNGLE && v != JUNGLE_HILLS {
+                continue;
+            }
+            let cs = chunk_seed(ss, i + x, j + z);
+            if first_is_zero(cs, if v == SWAMP { 6 } else { 8 }) {
+                out[o] = RIVER;
+            }
+        }
+    }
+}
+
 /// `mapIsland`（`mapRemoveTooMuchOcean`）：被海洋包围的深海格 1/2 概率变陆地。
 fn map_island(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
     let l = &ls.layers[idx];
@@ -1011,11 +1389,18 @@ const LUSH_BIOMES: [i32; 6] = [FOREST, DARK_FOREST, MOUNTAINS, PLAINS, BIRCH_FOR
 const COLD_BIOMES: [i32; 4] = [FOREST, MOUNTAINS, TAIGA, PLAINS];
 const SNOW_BIOMES: [i32; 4] = [SNOWY_TUNDRA, SNOWY_TUNDRA, SNOWY_TUNDRA, SNOWY_TAIGA];
 
-/// `mapBiome`（1.7+ 分支）：温度分类 → 具体群系（含 0xf00 稀有标记的特判）。
+// `mapBiome` 的 1.6- 旧群系表（`oldBiomes` / `oldBiomes11`）
+const OLD_BIOMES: [i32; 7] = [DESERT, FOREST, MOUNTAINS, SWAMP, PLAINS, TAIGA, JUNGLE];
+const OLD_BIOMES_11: [i32; 6] = [DESERT, FOREST, MOUNTAINS, SWAMP, PLAINS, TAIGA];
+
+/// `mapBiome`：温度分类（1.7+）或 0/1/plains/snowy_tundra（1.6-）→ 具体群系。
 ///
-/// C 中 `mc <= MC_1_6` 的旧版分支在本库不可达（`McVersion` 从 1.7 起），未移植。
+/// 1.6- 分支（C `mc <= MC_1_6`）：1.1- 用 6 项表，1.2+ 用 7 项表（含丛林）；
+/// 非 `plains` 输入（即 `snowy_tundra`）强制回到 `snowy_tundra`，例外是
+/// 1.3+ 抽中 `taiga` 时保留。
 fn map_biome(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
     let l = &ls.layers[idx];
+    let mc = l.mc;
     get_map(ls, l.p.unwrap(), out, x, z, w, h);
     let ss = l.start_seed;
 
@@ -1025,6 +1410,24 @@ fn map_biome(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i3
             let id = out[o];
             let has_high_bit = id & 0xf00;
             let id = id & !0xf00;
+
+            if mc <= McVersion::V1_6 {
+                if id == OCEAN || id == MUSHROOM_FIELDS {
+                    out[o] = id;
+                    continue;
+                }
+                let cs = chunk_seed(ss, i + x, j + z);
+                let mut v = if mc <= McVersion::V1_1 {
+                    OLD_BIOMES_11[first_int(cs, 6) as usize]
+                } else {
+                    OLD_BIOMES[first_int(cs, 7) as usize]
+                };
+                if id != PLAINS && (v != TAIGA || mc <= McVersion::V1_2) {
+                    v = SNOWY_TUNDRA;
+                }
+                out[o] = v;
+                continue;
+            }
 
             if is_oceanic(id) || id == MUSHROOM_FIELDS {
                 out[o] = id;
@@ -1066,18 +1469,19 @@ fn map_biome(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i3
     }
 }
 
-/// `mapNoise`（`mapRiverInit`）：河流噪声初始化（1.7+ 模 299999）。
+/// `mapNoise`（`mapRiverInit`）：河流噪声初始化（1.7+ 模 299999，1.6- 模 2）。
 fn map_noise(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
     let l = &ls.layers[idx];
     get_map(ls, l.p.unwrap(), out, x, z, w, h);
     let ss = l.start_seed;
+    let m = if l.mc <= V1_6 { 2 } else { 299999 };
 
     for j in 0..h {
         for i in 0..w {
             let o = (i + j * w) as usize;
             if out[o] > 0 {
                 let cs = chunk_seed(ss, i + x, j + z);
-                out[o] = first_int(cs, 299999) + 2;
+                out[o] = first_int(cs, m) + 2;
             } else {
                 out[o] = 0;
             }
@@ -1200,7 +1604,7 @@ fn map_hills(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i3
             let a11 = a[i + 1 + (j + 1) * pwu]; // 群系分支
             let b11 = riv[i + 1 + (j + 1) * pwu]; // 河流分支
             let o = i + j * w as usize;
-            let bn = (b11 - 2) % 29; // mc >= 1.7 恒成立
+            let bn = if mc >= V1_7 { (b11 - 2) % 29 } else { -1 };
 
             if bn == 1 && b11 >= 2 && !is_shallow_ocean(a11) {
                 let m = get_mutated(mc, a11);
@@ -1220,15 +1624,26 @@ fn map_hills(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i3
                     GIANT_TREE_TAIGA => hill = GIANT_TREE_TAIGA_HILLS,
                     SNOWY_TAIGA => hill = SNOWY_TAIGA_HILLS,
                     PLAINS => {
-                        // mc <= 1.6 的 forest 分支不可达
-                        cs = step_seed(cs, st);
-                        hill = if first_is_zero(cs, 3) { WOODED_HILLS } else { FOREST };
+                        if mc <= V1_6 {
+                            hill = FOREST;
+                        } else {
+                            cs = step_seed(cs, st);
+                            hill = if first_is_zero(cs, 3) { WOODED_HILLS } else { FOREST };
+                        }
                     }
                     SNOWY_TUNDRA => hill = SNOWY_MOUNTAINS,
                     JUNGLE => hill = JUNGLE_HILLS,
                     BAMBOO_JUNGLE => hill = BAMBOO_JUNGLE_HILLS,
-                    OCEAN => hill = DEEP_OCEAN,      // mc >= 1.7
-                    MOUNTAINS => hill = WOODED_MOUNTAINS, // mc >= 1.7
+                    OCEAN => {
+                        if mc >= V1_7 {
+                            hill = DEEP_OCEAN;
+                        }
+                    }
+                    MOUNTAINS => {
+                        if mc >= V1_7 {
+                            hill = WOODED_MOUNTAINS;
+                        }
+                    }
                     SAVANNA => hill = SAVANNA_PLATEAU,
                     _ => {
                         if are_similar(mc, a11, WOODED_BADLANDS_PLATEAU) {
@@ -1268,7 +1683,7 @@ fn map_hills(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i3
                     if are_similar(mc, a12, a11) {
                         equals += 1;
                     }
-                    out[o] = if equals >= 3 { hill } else { a11 }; // mc >= 1.7: 3
+                    out[o] = if equals >= 3 + (mc <= V1_6) as i32 { hill } else { a11 };
                 } else {
                     out[o] = a11;
                 }
@@ -1292,20 +1707,32 @@ fn reduce_id(id: i32) -> i32 {
 /// `mapRiver`：河流边界提取（一致区域写 -1，边界写 `river`）。
 fn map_river(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
     let l = &ls.layers[idx];
+    let mc = l.mc;
     let (pbuf, pw) = parent_area(ls, l, x, z, w, h);
     let pwu = pw as usize;
 
     for j in 0..h as usize {
         let (row0, row1, row2) = (j * pwu, (j + 1) * pwu, (j + 2) * pwu);
         for i in 0..w as usize {
-            // mc >= 1.7：先 reduceID
-            let v01 = reduce_id(pbuf[row1 + i]);
-            let v11 = reduce_id(pbuf[row1 + i + 1]);
-            let v21 = reduce_id(pbuf[row1 + i + 2]);
-            let v10 = reduce_id(pbuf[row0 + i + 1]);
-            let v12 = reduce_id(pbuf[row2 + i + 1]);
+            let mut v01 = pbuf[row1 + i];
+            let mut v11 = pbuf[row1 + i + 1];
+            let mut v21 = pbuf[row1 + i + 2];
+            let mut v10 = pbuf[row0 + i + 1];
+            let mut v12 = pbuf[row2 + i + 1];
+            let o = i + j * w as usize;
 
-            out[i + j * w as usize] = if v11 == v01 && v11 == v10 && v11 == v12 && v11 == v21 {
+            if mc >= V1_7 {
+                v01 = reduce_id(v01);
+                v11 = reduce_id(v11);
+                v21 = reduce_id(v21);
+                v10 = reduce_id(v10);
+                v12 = reduce_id(v12);
+            } else if v11 == 0 {
+                out[o] = RIVER;
+                continue;
+            }
+
+            out[o] = if v11 == v01 && v11 == v10 && v11 == v12 && v11 == v21 {
                 -1
             } else {
                 RIVER
@@ -1393,9 +1820,9 @@ fn is_any4_oceanic(a: i32, b: i32, c: i32, d: i32) -> bool {
     is_oceanic(a) || is_oceanic(b) || is_oceanic(c) || is_oceanic(d)
 }
 
-/// `mapShore`（1.7+ 分支）：海岸/石岸/雪滩与丛林、恶地边界。
+/// `mapShore`：海岸/石岸/雪滩与丛林、恶地边界（1.7+ 分支）。
 ///
-/// C 中 `mc <= MC_1_0` 与 `mc <= MC_1_6` 的旧版分支在本库不可达，未移植。
+/// 1.1–1.6 只处理 mountains→mountain_edge 与 beach；1.0 及更早除蘑菇岸外直通。
 fn map_shore(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
     let l = &ls.layers[idx];
     let mc = l.mc;
@@ -1405,7 +1832,7 @@ fn map_shore(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i3
     for j in 0..h as usize {
         let (row0, row1, row2) = (j * pwu, (j + 1) * pwu, (j + 2) * pwu);
         for i in 0..w as usize {
-            let v11 = pbuf[row1 + i + 1];
+            let mut v11 = pbuf[row1 + i + 1];
             let v10 = pbuf[row0 + i + 1];
             let v21 = pbuf[row1 + i + 2];
             let v01 = pbuf[row1 + i];
@@ -1420,8 +1847,23 @@ fn map_shore(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i3
                 };
                 continue;
             }
+            if mc <= V1_0 {
+                out[o] = v11;
+                continue;
+            }
 
-            if get_category(mc, v11) == JUNGLE {
+            if mc <= V1_6 {
+                if v11 == MOUNTAINS {
+                    if v10 != MOUNTAINS || v21 != MOUNTAINS || v01 != MOUNTAINS || v12 != MOUNTAINS {
+                        v11 = MOUNTAIN_EDGE;
+                    }
+                } else if v11 != OCEAN && v11 != RIVER && v11 != SWAMP
+                    && is_any4(OCEAN, v10, v21, v01, v12)
+                {
+                    v11 = BEACH;
+                }
+                out[o] = v11;
+            } else if get_category(mc, v11) == JUNGLE {
                 if is_all4_jfto(mc, v10, v21, v01, v12) {
                     out[o] = if is_any4_oceanic(v10, v21, v01, v12) {
                         BEACH
@@ -1464,11 +1906,11 @@ fn map_river_mix(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w
     get_map(ls, l.p.unwrap(), out, x, z, w, h); // 群系链
     let mut rbuf = vec![0i32; (w * h) as usize];
     get_map(ls, l.p2.unwrap(), &mut rbuf, x, z, w, h); // 河流链
+    let mc = l.mc;
 
     for o in 0..(w * h) as usize {
         let mut v = out[o];
-        // mc >= 1.7：`buf == river && !isOceanic(v)`（`v != ocean` 被蕴含，保留原式）
-        if rbuf[o] == RIVER && v != OCEAN && !is_oceanic(v) {
+        if rbuf[o] == RIVER && v != OCEAN && (mc <= V1_6 || !is_oceanic(v)) {
             if v == SNOWY_TUNDRA {
                 v = FROZEN_RIVER;
             } else if v == MUSHROOM_FIELDS || v == MUSHROOM_FIELD_SHORE {
@@ -1577,6 +2019,36 @@ fn map_ocean_mix(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w
     }
 }
 
+/// `mapOceanMixMod`（generator.c 的 `FORCE_OCEAN_VARIANTS` 自定义路径，
+/// 1.13+）：陆地链与海洋温度链在同区域已生成完毕后的逐格混合。
+///
+/// 与 [`map_ocean_mix`] 不同，这里没有 warm/frozen 海洋的岸边降级扫描：
+/// 陆地为海洋格时直接取海洋变体（陆地为 `deep_ocean` 时把浅海变体
+/// 升级为对应深海）。`land` 与 `ocean` 须等长。
+pub fn map_ocean_mix_mod(land: &[i32], ocean: &[i32]) -> Vec<i32> {
+    assert_eq!(land.len(), ocean.len(), "mapOceanMixMod: 输入长度不一致");
+    let mut out = vec![0i32; land.len()];
+    for o in 0..land.len() {
+        let land_id = land[o];
+        if !is_oceanic(land_id) {
+            out[o] = land_id;
+            continue;
+        }
+        let mut ocean_id = ocean[o];
+        if land_id == DEEP_OCEAN {
+            ocean_id = match ocean_id {
+                LUKEWARM_OCEAN => DEEP_LUKEWARM_OCEAN,
+                OCEAN => DEEP_OCEAN,
+                COLD_OCEAN => DEEP_COLD_OCEAN,
+                FROZEN_OCEAN => DEEP_FROZEN_OCEAN,
+                other => other,
+            };
+        }
+        out[o] = ocean_id;
+    }
+    out
+}
+
 /// `mapVoronoi114`：1.14- 的 1:1 voronoi 缩放层。
 fn map_voronoi114(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, w: i32, h: i32) {
     let l = &ls.layers[idx];
@@ -1590,98 +2062,19 @@ fn map_voronoi114(ls: &LayerStack, idx: usize, out: &mut [i32], x: i32, z: i32, 
     let mut src = vec![0i32; (pw * ph) as usize];
     get_map(ls, l.p.unwrap(), &mut src, px, pz, pw, ph);
 
-    let (st, ss) = (l.start_salt, l.start_seed);
-    let mut buf = vec![0i32; (w * h) as usize];
-    let pwu = pw as usize;
-
-    for pj in 0..ph - 1 {
-        let mut v00 = src[pj as usize * pwu];
-        let mut v01 = src[(pj as usize + 1) * pwu];
-        let pjz = pz + pj;
-        let j4 = pjz * 4 - z;
-
-        for pi in 0..pw - 1 {
-            let pix = px + pi;
-            let i4 = pix * 4 - x;
-            let v10 = src[(pi + 1 + pj * pw) as usize];
-            let v11 = src[(pi + 1 + (pj + 1) * pw) as usize];
-
-            if v00 == v01 && v00 == v10 && v00 == v11 {
-                for jj in 0..4 {
-                    let j = j4 + jj;
-                    if j < 0 || j >= h {
-                        continue;
-                    }
-                    for ii in 0..4 {
-                        let i = i4 + ii;
-                        if i < 0 || i >= w {
-                            continue;
-                        }
-                        buf[(j * w + i) as usize] = v00;
-                    }
-                }
-            } else {
-                let mut cs = chunk_seed(ss, (pi + px) * 4, (pj + pz) * 4);
-                let da1 = ((first_int(cs, 1024) - 512) * 36) as i64;
-                cs = step_seed(cs, st);
-                let da2 = ((first_int(cs, 1024) - 512) * 36) as i64;
-
-                cs = chunk_seed(ss, (pi + px + 1) * 4, (pj + pz) * 4);
-                let db1 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
-                cs = step_seed(cs, st);
-                let db2 = ((first_int(cs, 1024) - 512) * 36) as i64;
-
-                cs = chunk_seed(ss, (pi + px) * 4, (pj + pz + 1) * 4);
-                let dc1 = ((first_int(cs, 1024) - 512) * 36) as i64;
-                cs = step_seed(cs, st);
-                let dc2 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
-
-                cs = chunk_seed(ss, (pi + px + 1) * 4, (pj + pz + 1) * 4);
-                let dd1 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
-                cs = step_seed(cs, st);
-                let dd2 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
-
-                for jj in 0..4 {
-                    let j = j4 + jj;
-                    if j < 0 || j >= h {
-                        continue;
-                    }
-                    let mj = (10240 * jj) as i64;
-                    let sja = (mj - da2) * (mj - da2);
-                    let sjb = (mj - db2) * (mj - db2);
-                    let sjc = (mj - dc2) * (mj - dc2);
-                    let sjd = (mj - dd2) * (mj - dd2);
-
-                    for ii in 0..4 {
-                        let i = i4 + ii;
-                        if i < 0 || i >= w {
-                            continue;
-                        }
-                        let mi = (10240 * ii) as i64;
-                        let da = (mi - da1) * (mi - da1) + sja;
-                        let db = (mi - db1) * (mi - db1) + sjb;
-                        let dc = (mi - dc1) * (mi - dc1) + sjc;
-                        let dd = (mi - dd1) * (mi - dd1) + sjd;
-
-                        let v = if da < db && da < dc && da < dd {
-                            v00
-                        } else if db < da && db < dc && db < dd {
-                            v10
-                        } else if dc < da && dc < db && dc < dd {
-                            v01
-                        } else {
-                            v11
-                        };
-                        buf[(j * w + i) as usize] = v;
-                    }
-                }
-            }
-            v00 = v10;
-            v01 = v11;
-        }
-    }
-
-    out[..(w * h) as usize].copy_from_slice(&buf);
+    // 核心算法见 voronoi::map_voronoi_114_plane（末地 scale 1 路径共用）。
+    // C 把结果写进 out 之后的暂存区再 memmove 回来；循环覆盖全部输出格，
+    // 直接写 out 等价。注意传参 x/z 要加回 2（核心函数内部会再减 2）。
+    super::voronoi::map_voronoi_114_plane(
+        l.start_salt,
+        l.start_seed,
+        &src,
+        out,
+        x + 2,
+        z + 2,
+        w,
+        h,
+    );
 }
 
 /// `mapVoronoi`（1.15+）：SHA 播种的 voronoi 平面缩放层。

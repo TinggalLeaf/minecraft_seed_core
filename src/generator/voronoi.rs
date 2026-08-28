@@ -1,10 +1,13 @@
 //! Voronoi 缩放（1:1 比例）助手。
 //!
 //! 移植 cubiomes `layers.c` 的 `getVoronoiSHA` / `getVoronoiCell` /
-//! `voronoiAccess3D` 与 `biomenoise.c` 的 `getVoronoiSrcRange`。
-//! 1.15+ 的 1:1 群系边界由这些函数把 1:4 噪声单元扰动成 voronoi 细胞。
+//! `voronoiAccess3D` / `mapVoronoi114`（核心部分）与 `biomenoise.c` 的
+//! `getVoronoiSrcRange`。
+//! 1.15+ 的 1:1 群系边界由这些函数把 1:4 噪声单元扰动成 voronoi 细胞；
+//! 1.14-（含末地 1.9–1.14 的 scale 1）使用旧版平面 voronoi
+//!（[`map_voronoi_114_plane`]，种子流水线而非 SHA）。
 
-use crate::rng::seed::step_seed;
+use crate::rng::seed::{chunk_seed, first_int, step_seed};
 
 use super::Range;
 
@@ -265,6 +268,126 @@ pub fn map_voronoi_plane(
 
             v00 = v01;
             v10 = v11;
+        }
+    }
+}
+
+/// `mapVoronoi114` 的核心（1.14- 旧版平面 voronoi 缩放）：给定 1:4 源平面
+/// `src`，输出 1:1 平面到 `out`。
+///
+/// 对应 C 中 `l->p == NULL`（源数据已就位）的调用形式：源区域
+/// `(px, pz, pw, ph)` 由输出区域 `(x, z, w, h)` 推出（与函数体内的
+/// `x -= 2; z -= 2` 之后一致），`src` 须有 `pw*ph` 个元素。
+/// `st`/`ss` 为层的 `startSalt`/`startSeed`（末地路径：零初始化层 +
+/// `startSalt = getLayerSalt(10)`，即 `st = layer_salt(10), ss = 0`）。
+///
+/// C 把结果写进 `out` 之后的暂存区再 `memmove` 回来；循环覆盖全部输出格，
+/// 故这里直接写 `out`。
+#[allow(clippy::too_many_arguments)]
+pub fn map_voronoi_114_plane(
+    st: u64,
+    ss: u64,
+    src: &[i32],
+    out: &mut [i32],
+    x: i32,
+    z: i32,
+    w: i32,
+    h: i32,
+) {
+    let x = x - 2;
+    let z = z - 2;
+    let px = x >> 2;
+    let pz = z >> 2;
+    let pw = ((x + w) >> 2) - px + 2;
+    let ph = ((z + h) >> 2) - pz + 2;
+    let pwu = pw as usize;
+    debug_assert!(src.len() >= pwu * ph as usize);
+    debug_assert!(out.len() >= (w * h) as usize);
+
+    for pj in 0..ph - 1 {
+        let mut v00 = src[pj as usize * pwu];
+        let mut v01 = src[(pj as usize + 1) * pwu];
+        let pjz = pz + pj;
+        let j4 = pjz * 4 - z;
+
+        for pi in 0..pw - 1 {
+            let pix = px + pi;
+            let i4 = pix * 4 - x;
+            let v10 = src[(pi + 1 + pj * pw) as usize];
+            let v11 = src[(pi + 1 + (pj + 1) * pw) as usize];
+
+            if v00 == v01 && v00 == v10 && v00 == v11 {
+                for jj in 0..4 {
+                    let j = j4 + jj;
+                    if j < 0 || j >= h {
+                        continue;
+                    }
+                    for ii in 0..4 {
+                        let i = i4 + ii;
+                        if i < 0 || i >= w {
+                            continue;
+                        }
+                        out[(j * w + i) as usize] = v00;
+                    }
+                }
+            } else {
+                let mut cs = chunk_seed(ss, (pi + px) * 4, (pj + pz) * 4);
+                let da1 = ((first_int(cs, 1024) - 512) * 36) as i64;
+                cs = step_seed(cs, st);
+                let da2 = ((first_int(cs, 1024) - 512) * 36) as i64;
+
+                cs = chunk_seed(ss, (pi + px + 1) * 4, (pj + pz) * 4);
+                let db1 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
+                cs = step_seed(cs, st);
+                let db2 = ((first_int(cs, 1024) - 512) * 36) as i64;
+
+                cs = chunk_seed(ss, (pi + px) * 4, (pj + pz + 1) * 4);
+                let dc1 = ((first_int(cs, 1024) - 512) * 36) as i64;
+                cs = step_seed(cs, st);
+                let dc2 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
+
+                cs = chunk_seed(ss, (pi + px + 1) * 4, (pj + pz + 1) * 4);
+                let dd1 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
+                cs = step_seed(cs, st);
+                let dd2 = ((first_int(cs, 1024) - 512) * 36) as i64 + 40 * 1024;
+
+                for jj in 0..4 {
+                    let j = j4 + jj;
+                    if j < 0 || j >= h {
+                        continue;
+                    }
+                    let mj = (10240 * jj) as i64;
+                    let sja = (mj - da2) * (mj - da2);
+                    let sjb = (mj - db2) * (mj - db2);
+                    let sjc = (mj - dc2) * (mj - dc2);
+                    let sjd = (mj - dd2) * (mj - dd2);
+
+                    for ii in 0..4 {
+                        let i = i4 + ii;
+                        if i < 0 || i >= w {
+                            continue;
+                        }
+                        let mi = (10240 * ii) as i64;
+                        let da = (mi - da1) * (mi - da1) + sja;
+                        let db = (mi - db1) * (mi - db1) + sjb;
+                        let dc = (mi - dc1) * (mi - dc1) + sjc;
+                        let dd = (mi - dd1) * (mi - dd1) + sjd;
+
+                        let v = if da < db && da < dc && da < dd {
+                            v00
+                        } else if db < da && db < dc && db < dd {
+                            v10
+                        } else if dc < da && dc < db && dc < dd {
+                            v01
+                        } else {
+                            v11
+                        };
+                        out[(j * w + i) as usize] = v;
+                    }
+                }
+            }
+            v00 = v10;
+            v01 = v11;
         }
     }
 }

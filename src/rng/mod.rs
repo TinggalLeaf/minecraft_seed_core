@@ -10,5 +10,5 @@ pub mod java;
 pub mod seed;
 pub mod xoroshiro;
 
-pub use java::JavaRandom;
+pub use java::{JavaRandom, mul_inv};
 pub use xoroshiro::Xoroshiro;

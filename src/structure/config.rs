@@ -231,10 +231,6 @@ const S_END_ISLAND: StructureConfig =
 /// `getStructureConfig`：取指定版本下某结构类型的配置。
 ///
 /// 该版本不支持此结构时返回 `None`（C 返回 0 且把配置清零）。
-///
-/// 注意：本库的版本下界是 1.7（cubiomes 的 `MC_1_7`），C 中涉及
-/// `MC_B1_8`/`MC_1_3`/`MC_1_4` 等更早版本的条件在本库里恒为真，已按此化简
-/// 并在相应分支注释说明。
 pub fn get_config(stype: StructureType, mc: McVersion) -> Option<StructureConfig> {
     use StructureType::*;
     let conf = match stype {
@@ -244,23 +240,26 @@ pub fn get_config(stype: StructureType, mc: McVersion) -> Option<StructureConfig
             }
             S_FEATURE
         }
-        // mc >= MC_1_3 恒真（本库最旧为 1.7）
-        DesertPyramid => {
-            if mc <= McVersion::V1_12 {
-                S_DESERT_PYRAMID_112
-            } else {
-                S_DESERT_PYRAMID
+        DesertPyramid | JungleTemple => {
+            if mc < McVersion::V1_3 {
+                return None;
             }
-        }
-        JungleTemple => {
             if mc <= McVersion::V1_12 {
-                S_JUNGLE_TEMPLE_112
+                if stype == DesertPyramid {
+                    S_DESERT_PYRAMID_112
+                } else {
+                    S_JUNGLE_TEMPLE_112
+                }
+            } else if stype == DesertPyramid {
+                S_DESERT_PYRAMID
             } else {
                 S_JUNGLE_TEMPLE
             }
         }
-        // mc >= MC_1_4 恒真
         SwampHut => {
+            if mc < McVersion::V1_4 {
+                return None;
+            }
             if mc <= McVersion::V1_12 {
                 S_SWAMP_HUT_112
             } else {
@@ -277,8 +276,10 @@ pub fn get_config(stype: StructureType, mc: McVersion) -> Option<StructureConfig
                 S_IGLOO
             }
         }
-        // mc >= MC_B1_8 恒真
         Village => {
+            if mc < McVersion::B1_8 {
+                return None;
+            }
             if mc <= McVersion::V1_17 {
                 S_VILLAGE_117
             } else {
@@ -357,10 +358,16 @@ pub fn get_config(stype: StructureType, mc: McVersion) -> Option<StructureConfig
             }
             S_TREASURE
         }
-        // mc >= MC_B1_8 恒真
-        Mineshaft => S_MINESHAFT,
-        // mc >= MC_1_0 恒真
+        Mineshaft => {
+            if mc < McVersion::B1_8 {
+                return None;
+            }
+            S_MINESHAFT
+        }
         Fortress => {
+            if mc < McVersion::V1_0 {
+                return None;
+            }
             if mc <= McVersion::V1_15 {
                 S_FORTRESS_115
             } else {

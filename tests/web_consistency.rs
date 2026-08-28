@@ -5,8 +5,8 @@
 //! 在 Node 中直接实例化导出，见 [`web_golden_data`] 头注释。
 //!
 //! 已核实的语义（详见 `docs/INTEGRATION.md`）：
-//! - `find_spawn` = cubiomes `getSpawn`（含地形修正），本库实现的是
-//!   `estimateSpawn`，两者在已验证用例中切比雪夫距离 ≤ 48，故用容差比较。
+//! - `find_spawn` = cubiomes `getSpawn`（含地形修正），本库 `get_spawn`
+//!   与其逐位一致，直接精确比较。
 //! - `generate_area` 的 x/z 是 1:4 群系比例坐标（不是方块坐标）；
 //!   yHeight=320 时 y 传 80（quart）或 320 结果一致（均在地表之上）。
 //! - `get_structure_in_regions(range=8)` 覆盖以原点为中心的
@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 
 use minecraft_seed_core::generator::{Generator, Range};
 use minecraft_seed_core::structure::{
-    estimate_spawn, get_config, get_structure_pos, is_viable_structure_pos, StrongholdIter,
+    get_config, get_spawn, get_structure_pos, is_viable_structure_pos, StrongholdIter,
     StructureType,
 };
 use minecraft_seed_core::{Dimension, McVersion};
@@ -62,33 +62,23 @@ fn case_gen(c: &WebCase) -> Generator {
     Generator::new(map_mc(c.mc)).with_seed(Dimension::Overworld, c.seed as u64)
 }
 
-/// 出生点：网站用 `getSpawn`（estimateSpawn + 地形修正），本库实现
-/// `estimateSpawn`。50 个用例实测最大切比雪夫偏差 48 方块（1.18+ 的
-/// 螺旋地表搜索），取容差 64。
+/// 出生点：网站 `find_spawn` = cubiomes `getSpawn`，本库 `get_spawn`
+/// 与其逐函数等价（另见 `bundle_b_golden.rs` 的 C 参考对拍），50 个用例
+/// 全部精确相等断言。
 #[test]
-fn web_spawn_matches_estimate_within_terrain_tolerance() {
-    const TOL: i32 = 64;
-    let mut exact = 0;
+fn web_spawn_matches_get_spawn_exactly() {
     for c in web_golden_data::CASES {
         let g = case_gen(c);
-        let est = estimate_spawn(&g);
+        let pos = get_spawn(&g);
         let (wx, wz) = (c.spawn[0], c.spawn[1]);
-        if (est.x, est.z) == (wx, wz) {
-            exact += 1;
-        }
-        assert!(
-            (est.x - wx).abs() <= TOL && (est.z - wz).abs() <= TOL,
-            "{} seed={}: estimate_spawn=({},{}) 网站 getSpawn=({},{})",
+        assert_eq!(
+            (pos.x, pos.z),
+            (wx, wz),
+            "{} seed={}: get_spawn 与网站 find_spawn 不一致",
             c.version,
-            c.seed,
-            est.x,
-            est.z,
-            wx,
-            wz
+            c.seed
         );
     }
-    // 1.7/1.12 的地形修正在这些种子上未触发，应全部精确相等（10/50）。
-    assert!(exact >= 10, "精确相等用例过少: {exact}");
 }
 
 /// 要塞：前 10 座逐一精确相等（1.8 及以前只有 3 座，网站以 -1 填充）。

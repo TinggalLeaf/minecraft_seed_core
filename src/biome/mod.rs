@@ -164,48 +164,101 @@ impl BiomeId {
         })
     }
 
-    /// 该群系在指定版本中是否存在（对应 cubiomes `biomeExists`）。
+    /// 该群系在指定版本中是否存在（对应 cubiomes `biomeExists`，全版本
+    /// 保真，含 Beta 1.7/1.8 与 1.0–1.6 的旧群系规则）。
     pub fn exists_in(self, mc: McVersion) -> bool {
         use BiomeId::*;
         let id = self as i32;
-        // 各版本新增群系的引入版本
-        let introduced = match self {
-            SmallEndIslands | EndMidlands | EndHighlands | EndBarrens
-            | WarmOcean | LukewarmOcean | ColdOcean | DeepWarmOcean
-            | DeepLukewarmOcean | DeepColdOcean | DeepFrozenOcean | TheVoid => McVersion::V1_13,
-            BambooJungle | BambooJungleHills => McVersion::V1_14,
-            SoulSandValley | CrimsonForest | WarpedForest | BasaltDeltas => McVersion::V1_16,
-            DripstoneCaves | LushCaves => McVersion::V1_17,
-            Meadow | Grove | SnowySlopes | JaggedPeaks | FrozenPeaks | StonyPeaks => {
-                McVersion::V1_18
-            }
-            DeepDark | MangroveSwamp => McVersion::V1_19,
-            CherryGrove => McVersion::V1_20,
-            PaleGarden => McVersion::V1_21,
-            _ => McVersion::V1_7,
-        };
-        if mc < introduced {
-            return false;
-        }
-        // 1.18 起移除的变体群系（山丘、边缘、浅滩等）
+
         if mc >= McVersion::V1_18 {
-            let removed = matches!(
+            // 1.18+ 的白名单（C `biomeExists` 首分支）
+            if (SmallEndIslands as i32..=EndBarrens as i32).contains(&id)
+                || (SoulSandValley as i32..=BasaltDeltas as i32).contains(&id)
+            {
+                return true;
+            }
+            if self == PaleGarden {
+                return mc >= McVersion::V1_21;
+            }
+            if self == CherryGrove {
+                return mc >= McVersion::V1_20;
+            }
+            if self == DeepDark || self == MangroveSwamp {
+                return mc >= McVersion::V1_19_2;
+            }
+            return matches!(
                 self,
-                DesertHills | WoodedHills | TaigaHills | MountainEdge | JungleHills
-                    | SnowyTaigaHills | GiantTreeTaigaHills | SnowyMountains
-                    | MushroomFieldShore | SwampHills | TaigaMountains | DarkForestHills
-                    | SnowyTaigaMountains | GiantSpruceTaigaHills | ModifiedGravellyMountains
-                    | ShatteredSavannaPlateau | ModifiedWoodedBadlandsPlateau
-                    | ModifiedBadlandsPlateau | BambooJungleHills | TallBirchHills
-                    | GravellyMountains | IceSpikes | ModifiedJungle | ModifiedJungleEdge
-                    | DesertLakes | SunflowerPlains | FlowerForest | DeepWarmOcean
+                Ocean | Plains | Desert | Mountains | Forest | Taiga | Swamp | River
+                    | NetherWastes | TheEnd | FrozenOcean | FrozenRiver | SnowyTundra
+                    | MushroomFields | Beach | Jungle | JungleEdge | DeepOcean | StoneShore
+                    | SnowyBeach | BirchForest | DarkForest | SnowyTaiga | GiantTreeTaiga
+                    | WoodedMountains | Savanna | SavannaPlateau | Badlands
+                    | WoodedBadlandsPlateau | WarmOcean | LukewarmOcean | ColdOcean
+                    | DeepWarmOcean | DeepLukewarmOcean | DeepColdOcean | DeepFrozenOcean
+                    | SunflowerPlains | GravellyMountains | FlowerForest | IceSpikes
+                    | TallBirchForest | GiantSpruceTaiga | ShatteredSavanna | ErodedBadlands
+                    | BambooJungle | DripstoneCaves | LushCaves | Meadow | Grove
+                    | SnowySlopes | StonyPeaks | JaggedPeaks | FrozenPeaks
             );
-            if removed {
-                return false;
+        }
+
+        // Beta 1.7-：气候查表时代的群系集（C 注释：海平面以下按海洋处理）
+        if mc <= McVersion::B1_7 {
+            return matches!(
+                self,
+                Plains | Desert | Forest | Taiga | Swamp | SnowyTundra | Savanna
+                    | SeasonalForest | Rainforest | Shrubland | Ocean | FrozenOcean
+            );
+        }
+        // Beta 1.8 移除的群系
+        if mc <= McVersion::B1_8 {
+            match self {
+                FrozenOcean | FrozenRiver | SnowyTundra | MushroomFields
+                | MushroomFieldShore | TheEnd => return false,
+                _ => {}
             }
         }
-        let _ = id;
-        true
+        // 1.0 及更早没有的群系
+        if mc <= McVersion::V1_0 {
+            match self {
+                SnowyMountains | Beach | DesertHills | WoodedHills | TaigaHills
+                | MountainEdge => return false,
+                _ => {}
+            }
+        }
+
+        if (Ocean as i32..=MountainEdge as i32).contains(&id) {
+            return true;
+        }
+        if (Jungle as i32..=JungleHills as i32).contains(&id) {
+            return mc >= McVersion::V1_2;
+        }
+        if (JungleEdge as i32..=BadlandsPlateau as i32).contains(&id) {
+            return mc >= McVersion::V1_7;
+        }
+        if (SmallEndIslands as i32..=EndBarrens as i32).contains(&id) {
+            return mc >= McVersion::V1_9;
+        }
+        if (WarmOcean as i32..=DeepFrozenOcean as i32).contains(&id) {
+            return mc >= McVersion::V1_13;
+        }
+        match self {
+            TheVoid => mc >= McVersion::V1_9,
+            SunflowerPlains | DesertLakes | GravellyMountains | FlowerForest
+            | TaigaMountains | SwampHills | IceSpikes | ModifiedJungle
+            | ModifiedJungleEdge | TallBirchForest | TallBirchHills | DarkForestHills
+            | SnowyTaigaMountains | GiantSpruceTaiga | GiantSpruceTaigaHills
+            | ModifiedGravellyMountains | ShatteredSavanna | ShatteredSavannaPlateau
+            | ErodedBadlands | ModifiedWoodedBadlandsPlateau | ModifiedBadlandsPlateau => {
+                mc >= McVersion::V1_7
+            }
+            BambooJungle | BambooJungleHills => mc >= McVersion::V1_14,
+            SoulSandValley | CrimsonForest | WarpedForest | BasaltDeltas => {
+                mc >= McVersion::V1_16_1
+            }
+            DripstoneCaves | LushCaves => mc >= McVersion::V1_17,
+            _ => false,
+        }
     }
 }
 
@@ -373,6 +426,90 @@ pub fn is_snowy(id: i32) -> bool {
             | SnowyTaiga | SnowyTaigaHills | IceSpikes | SnowyTaigaMountains
         )
     )
+}
+
+/// `getBiomeDepthAndScale`：旧版（≤1.17）群系的深度/缩放/地表草方格高度表。
+///
+/// 返回 `(depth, scale, grass)`；`grass` 是生成地表草方块所需的最低高度
+/// （0 表示该群系不生成草方块地表，`getSpawn` 的 ≤1.12 地形修正用到）。
+/// 表外的群系（如 1.18+ 新增群系）返回 `(0.0, 0.0, 0)`，与 C 中
+/// `default: return 0` 时输出参数保持调用处零初始化的行为一致。
+pub fn biome_depth_and_scale(id: i32) -> (f64, f64, i32) {
+    use BiomeId::*;
+    const DH: i32 = 62; // default height
+    let (s, d, g) = match BiomeId::from_i32(id) {
+        Some(Ocean) => (0.100, -1.000, DH),
+        Some(Plains) => (0.050, 0.125, DH),
+        Some(Desert) => (0.050, 0.125, 0),
+        Some(Mountains) => (0.500, 1.000, DH),
+        Some(Forest) => (0.200, 0.100, DH),
+        Some(Taiga) => (0.200, 0.200, DH),
+        Some(Swamp) => (0.100, -0.200, DH),
+        Some(River) => (0.000, -0.500, 60),
+        Some(FrozenOcean) => (0.100, -1.000, DH),
+        Some(FrozenRiver) => (0.000, -0.500, 60),
+        Some(SnowyTundra) => (0.050, 0.125, DH),
+        Some(SnowyMountains) => (0.300, 0.450, DH),
+        Some(MushroomFields) => (0.300, 0.200, 0),
+        Some(MushroomFieldShore) => (0.025, 0.000, 0),
+        Some(Beach) => (0.025, 0.000, 64),
+        Some(DesertHills) => (0.300, 0.450, 0),
+        Some(WoodedHills) => (0.300, 0.450, DH),
+        Some(TaigaHills) => (0.300, 0.450, DH),
+        Some(MountainEdge) => (0.300, 0.800, DH),
+        Some(Jungle) => (0.200, 0.100, DH),
+        Some(JungleHills) => (0.300, 0.450, DH),
+        Some(JungleEdge) => (0.200, 0.100, DH),
+        Some(DeepOcean) => (0.100, -1.800, DH),
+        Some(StoneShore) => (0.800, 0.100, 64),
+        Some(SnowyBeach) => (0.025, 0.000, 64),
+        Some(BirchForest) => (0.200, 0.100, DH),
+        Some(BirchForestHills) => (0.300, 0.450, DH),
+        Some(DarkForest) => (0.200, 0.100, DH),
+        Some(SnowyTaiga) => (0.200, 0.200, DH),
+        Some(SnowyTaigaHills) => (0.300, 0.450, DH),
+        Some(GiantTreeTaiga) => (0.200, 0.200, DH),
+        Some(GiantTreeTaigaHills) => (0.300, 0.450, DH),
+        Some(WoodedMountains) => (0.500, 1.000, DH),
+        Some(Savanna) => (0.050, 0.125, DH),
+        Some(SavannaPlateau) => (0.025, 1.500, DH),
+        Some(Badlands) => (0.200, 0.100, 0),
+        Some(WoodedBadlandsPlateau) => (0.025, 1.500, 0),
+        Some(BadlandsPlateau) => (0.025, 1.500, 0),
+        Some(WarmOcean) => (0.100, -1.000, 0),
+        Some(LukewarmOcean) => (0.100, -1.000, DH),
+        Some(ColdOcean) => (0.100, -1.000, DH),
+        Some(DeepWarmOcean) => (0.100, -1.800, 0),
+        Some(DeepLukewarmOcean) => (0.100, -1.800, DH),
+        Some(DeepColdOcean) => (0.100, -1.800, DH),
+        Some(DeepFrozenOcean) => (0.100, -1.800, DH),
+        Some(SunflowerPlains) => (0.050, 0.125, DH),
+        Some(DesertLakes) => (0.250, 0.225, 0),
+        Some(GravellyMountains) => (0.500, 1.000, DH),
+        Some(FlowerForest) => (0.400, 0.100, DH),
+        Some(TaigaMountains) => (0.400, 0.300, DH),
+        Some(SwampHills) => (0.300, -0.100, DH),
+        Some(IceSpikes) => (0.450, 0.425, 0),
+        Some(ModifiedJungle) => (0.400, 0.200, DH),
+        Some(ModifiedJungleEdge) => (0.400, 0.200, DH),
+        Some(TallBirchForest) => (0.400, 0.200, DH),
+        Some(TallBirchHills) => (0.500, 0.550, DH),
+        Some(DarkForestHills) => (0.400, 0.200, DH),
+        Some(SnowyTaigaMountains) => (0.400, 0.300, DH),
+        Some(GiantSpruceTaiga) => (0.200, 0.200, DH),
+        Some(GiantSpruceTaigaHills) => (0.200, 0.200, DH),
+        Some(ModifiedGravellyMountains) => (0.500, 1.000, DH),
+        Some(ShatteredSavanna) => (1.225, 0.3625, DH),
+        Some(ShatteredSavannaPlateau) => (1.212, 1.050, DH),
+        Some(ErodedBadlands) => (0.200, 0.100, 0),
+        Some(ModifiedWoodedBadlandsPlateau) => (0.300, 0.450, 0),
+        Some(ModifiedBadlandsPlateau) => (0.300, 0.450, 0),
+        Some(BambooJungle) => (0.200, 0.100, DH),
+        Some(BambooJungleHills) => (0.300, 0.450, DH),
+        // C 的 default 分支：depth/scale/grass 保持零初始化
+        _ => return (0.0, 0.0, 0),
+    };
+    (d, s, g)
 }
 
 #[cfg(test)]

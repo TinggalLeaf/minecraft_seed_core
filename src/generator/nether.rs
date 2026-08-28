@@ -74,6 +74,23 @@ impl NetherNoise {
         (biome, ndel)
     }
 
+    /// `mapNether3D`：带半径填充优化的 3D 区域生成。
+    ///
+    /// `confidence` 为置信度阈值：`1.0` 为精确模式；`< 1.0` 时填充半径
+    /// 按 `1/confidence` 放大（近似模式，采样点更少、边界附近可能与精确
+    /// 结果不同，C 注释 "the smaller the confidence, the bigger the error"）。
+    ///
+    /// # Panics
+    ///
+    /// `r.scale <= 3`（C 中 `mapNether3D` 对非法 scale 返回错误）。
+    pub fn map_3d(&self, r: Range, confidence: f32) -> Vec<BiomeId> {
+        let mut r = r;
+        if r.sy <= 0 {
+            r.sy = 1;
+        }
+        map_nether_3d(self, r, confidence)
+    }
+
     /// `genNetherScaled`：下界区域群系生成。
     ///
     /// `r.scale` 支持 1、4、16、64、256（<=0 视为 4，1 以外按 1:4 的整数倍）。
@@ -174,8 +191,8 @@ fn fill_rad_3d(
     }
 }
 
-/// `mapNether3D`：带半径填充优化的 3D 区域生成（`confidence` 恒为 1.0，
-/// 即精确模式；C 中 <1.0 的近似模式未移植）。
+/// `mapNether3D`：带半径填充优化的 3D 区域生成（`confidence` 见
+/// [`NetherNoise::map_3d`]；`genNetherScaled` 恒用精确模式 1.0）。
 fn map_nether_3d(nn: &NetherNoise, r: Range, confidence: f32) -> Vec<BiomeId> {
     assert!(r.scale > 3, "mapNether3D() invalid scale for this function");
     let scale = r.scale / 4;

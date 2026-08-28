@@ -8,22 +8,28 @@
 
 | 功能 | 支持版本 | 说明 |
 | --- | --- | --- |
-| 主世界群系 | 1.7 – 1.21.4 | 1.7–1.17 分层 LayerStack；1.18+ 多噪声 + 群系搜索树 |
+| 主世界群系 | Beta 1.7 – 1.21.4 | Beta 1.7- 气候噪声（温度/湿度 64×64 表）+ 地形列噪声海洋判定；B1.8–1.17 分层 LayerStack；1.18+ 多噪声 + 群系搜索树 |
 | 下界群系 | 1.16.1 – 1.21.4 | 多噪声；更早版本按 cubiomes 行为填充 `nether_wastes` |
 | 末地群系 | 1.9 – 1.21.4 | simplex 高地噪声；更早版本填充 `the_end` |
-| 群系 scale 1（1:1 voronoi） | 主世界全部支持版本、下界 1.16.1+ | 末地 scale 1 未移植（调用会 panic） |
-| large biomes 世界类型 | 主世界全部支持版本 | `Generator::with_large_biomes(true)` |
+| 群系 scale 1（1:1） | 主世界全部支持版本、下界 1.16.1+ | B1.7- 由 beta 噪声路径直接生成（支持任意 2 的幂 scale）；B1.8–1.17 走 voronoi 缩放；末地 scale 1 未移植（调用会 panic） |
+| large biomes 世界类型 | 主世界 B1.8 及以后 | `Generator::with_large_biomes(true)`（B1.7- 无此世界类型） |
 | 结构候选定位 `get_structure_pos` | 按结构类型见 `get_config` | 25 种 `StructureType` 的 spacing/separation/salt 配置表全版本快照验证 |
-| 结构群系可行性 `is_viable_structure_pos` | 全支持版本 | 含 1.7–1.17 的粗层剪枝模拟与 1.18+ 的变体采样点 |
+| 结构群系可行性 `is_viable_structure_pos` | B1.8 及以后 | 含 B1.8–1.17 的粗层剪枝模拟与 1.18+ 的变体采样点；B1.7- 不可用（C 同样只做了一半，调用会 panic） |
 | 结构变体 `get_variant` | 部分类型 | 村庄、堡垒、远古城市、废弃传送门、神殿/神庙/沼泽小屋、雪屋、紫晶洞、试炼密室、海底神殿 |
-| 要塞 `StrongholdIter` | 全支持版本 | 1.8 及以前 3 座，1.9+ 128 座环带 |
-| 出生点估计 `estimate_spawn` | 全支持版本 | 近似出生点；mcseedmap 显示的是 cubiomes `getSpawn`（含地表地形修正），与 `estimate_spawn` 最多差几十格，见下文「端到端验证」 |
+| 结构部件生成 `get_end_city_pieces` / `get_fortress_pieces` / `get_house_list` | 末地城 1.9+、堡垒全版本、村庄 1.13- | 逐部件输出类型/位置/包围盒/朝向/depth；堡垒自动区分 ≤1.15 与 1.16+ 随机源路径 |
+| 要塞 `StrongholdIter` | B1.8 及以后 | B1.8–1.8 共 3 座，1.9+ 128 座环带；B1.7- 没有要塞（`next` 直接返回 0） |
+| 精确出生点 `get_spawn` | 全支持版本 | 对应 cubiomes `getSpawn`（`estimateSpawn` + 地表地形修正），与 mcseedmap 显示值逐位一致；B1.7- 恒为 `(0, 0)` |
+| 出生点估计 `estimate_spawn` | 全支持版本 | 近似出生点（`get_spawn` 的第一阶段，不含地形修正），更便宜；B1.7- 恒为 `(0, 0)` |
+| 地表高度近似 `Generator::map_approx_height` | 主世界全支持版本、末地 1.9+ | 1:4 比例 `ApproxHeight`（高度 + 群系 ID）；1.18+ 走 depth 气候参数，B1.8–1.17 走核加权割线法，B1.7- 走 `approxSurfaceBeta` 列噪声插值（不输出群系 ID），末地转发 `mapEndSurfaceHeight` |
+| 地形级 viability `is_viable_structure_terrain` / `is_viable_end_city_terrain` / `is_end_chunk_empty` | 1.18+ 主世界 / 末地 1.9+ | 沙漠神殿/丛林神庙/林地府邸四角 depth 判定；末地城最小地表高度；末地空 chunk 判定 |
+| 末地折跃门 `get_linked_gateway_chunk` / `get_linked_gateway_pos` | 1.13+ | 含 1.17+ MC 原版落点 bug 的逐位复刻 |
+| 四连底座高速搜索 `structure::quadbase` | 按结构类型见 `get_config` | 四连小屋/海底神殿等连体式底座判定（`is_quad_base*`）、region 扫描（`scan_for_quads`）、全 48 位多线程找种（`search_all48`）、AFK 站位（`get_optimal_afk`）；C 的文件断点续传外壳未移植 |
 | 史莱姆区块 `is_slime_chunk` | 全支持版本 | Java 版规则，与版本无关 |
 | 废弃矿井 `get_mineshafts` | 全支持版本 | 含 1.13- 的距离衰减规则 |
 | **Bedrock** 结构散布 `bedrock::structures_in_regions` / `find_structures` | 1.16.0 – 26.50 | 20 种 `BeStructureType`，region 网格 + MT19937 偏移，与网站 wasm 逐点一致 |
 | **Bedrock** 出生点 `bedrock::get_spawn` / 要塞 `bedrock::get_strongholds` | 与版本无关 | 只用种子低 32 位；要塞角度含 wasm 定制的 musl 变体 sin/cos |
 
-版本枚举为 `McVersion::V1_7` … `McVersion::V1_21`（含 `V1_16_1`、`V1_19_2`、`V1_21_1`、`V1_21_3` 等细分项，对齐 cubiomes 的 `MCVersion`），`McVersion::name()` 给出如 `"1.18.2"` 的字符串。
+版本枚举为 `McVersion::B1_7` … `McVersion::V1_21`（含 `B1_8`、`V1_0` … `V1_6` 与 `V1_16_1`、`V1_19_2`、`V1_21_1`、`V1_21_3` 等细分项，对齐 cubiomes 的 `MCVersion`），`McVersion::name()` 给出如 `"b1.7.3"`、`"1.18.2"` 的字符串。
 
 ## 快速开始
 
@@ -85,11 +91,13 @@ cargo clippy --all-targets -- -D warnings
 cargo build --examples
 ```
 
-golden 向量由 `reference/gen/` 下的 C 程序（`layervec.c`、`biomevec.c`、`structvec.c`、`noisevec.c`、`xorovec.c`、`jvec.c` 等，直接编译自 cubiomes 源码）生成；`gen_*_tests.py` 脚本把输出转为 Rust 测试断言。测试覆盖：RNG（Java LCG / Xoroshiro）、噪声（Perlin/Octave/DoublePerlin）、1.7–1.21 全版本 × 全群系区域快照、全版本 × 全结构类型的配置与位置、要塞/出生点/史莱姆区块等。
+golden 向量由 `reference/gen/` 下的 C 程序（`layervec.c`、`biomevec.c`、`structvec.c`、`noisevec.c`、`xorovec.c`、`jvec.c`、`bundleavec.c`、`bundlebvec.c`、`bundlecvec.c`、`bundledvec.c`、`bundleevec.c` 等，直接编译自 cubiomes 源码）生成；`gen_*_tests.py` 脚本把输出转为 Rust 测试断言。测试覆盖：RNG（Java LCG / Xoroshiro）、噪声（Perlin/Octave/DoublePerlin/SurfaceNoise/Beta 气候与地形噪声）、Beta 1.7–1.21 全版本 × 全群系区域快照、全版本 × 全结构类型的配置与位置、要塞/出生点/史莱姆区块、地表高度近似与地形级 viability/末地折跃门、末地城/下界堡垒/村庄的结构部件生成、四连底座高速搜索（窗口扫描候选列表与全 48 位搜索摘要）等。
+
+注意 Beta 1.7 的 golden 是个特例：cubiomes 的 `samplePerlinBeta17Terrain` 对 257 字节置换表存在越界读（UB），本库按 MC Beta 原版的 512 项对折表语义（下标 `& 0xff`）移植；`bundleevec.c` 因此链接修正后的 `noise_beta17_masked.c` 而非原版 `noise.c`（验证见 `reference/gen/betacheck.c`）。
 
 ## 与 mcseedmap.com 的端到端验证
 
-`tests/web_consistency.rs` 用**网站真实的 WASM 引擎**（`mcseedmap.com/workers/api.wasm`，即 cubiomes 的 Emscripten 编译产物）导出的输出做对拍：10 个版本 × 5 个种子的要塞坐标、64×64 群系区域（4096 个 id）、11 种结构的可行位置全部**逐一精确相等**；出生点在容差内（网站用 `getSpawn` 含地形修正，本库为 `estimate_spawn`）。重新生成 golden 的方法：`node reference/site/dump_golden.mjs`（需要先从网站下载最新的 `api.wasm`，详见 docs/INTEGRATION.md「与 mcseedmap.com 的端到端一致性验证」一节）。
+`tests/web_consistency.rs` 用**网站真实的 WASM 引擎**（`mcseedmap.com/workers/api.wasm`，即 cubiomes 的 Emscripten 编译产物）导出的输出做对拍：10 个版本 × 5 个种子的要塞坐标、64×64 群系区域（4096 个 id）、11 种结构的可行位置、出生点（网站 `find_spawn` = cubiomes `getSpawn`，本库 `get_spawn`）全部**逐一精确相等**。重新生成 golden 的方法：`node reference/site/dump_golden.mjs`（需要先从网站下载最新的 `api.wasm`，详见 docs/INTEGRATION.md「与 mcseedmap.com 的端到端一致性验证」一节）。
 
 `tests/bedrock_consistency.rs` 用网站的 Bedrock 引擎（`workers/bedrock.wasm`）做对拍：13 个版本 × 7 个种子的出生点、3 座要塞、15 种结构的 region 散布列表、全部配置表快照与 MT19937 原始向量全部**逐一精确相等**。重新生成 golden：`node reference/site/dump_bedrock_golden.mjs`。
 
@@ -109,14 +117,11 @@ Bedrock 侧**未实现**：带群系过滤的 `be_get_filtered_structures_in_reg
 以下功能 cubiomes 有而本库**未移植**（对接时请勿依赖）：
 
 - **Bedrock 带群系过滤的结构定位**（`be_get_filtered_structures_in_regions`）：网站自身未使用（Bedrock 群系底图复用 Java 引擎），本库同样未实现；非过滤版已完整覆盖。
-- `getSpawn` 精确出生点（依赖地表高度近似噪声管线）；本库提供 `estimate_spawn` 近似值。
-- `isViableStructureTerrain` / `isViableEndCityTerrain` 等地形级可行性检查：本库的 viability 只做群系层面判定。
-- 结构部件生成：`getEndCityPieces` / `getFortressPieces` / 村庄 `getHouseList`。
 - 末地群系的 scale 1（1:1 voronoi 平面缩放）：调用会 panic。
-- `quadbase.c`（四连底座高速搜索）与 `biomfilter.c`（群系过滤器）—— 找种级批量工具。
-- Beta 1.7 及更早版本（`betacheck` 相关逻辑仅在参考脚本中保留）。
+- `biomfilter.c`（群系过滤器）—— 找种级批量工具（四连底座搜索 `quadbase.c` 已移植，见功能矩阵）。
+- Alpha 1.1 及更早版本（`McVersion` 下界为 Beta 1.7，对齐 cubiomes 的 `MC_B1_7`）。
 
-此外注意：`Generator::gen_biomes` 在未调用 `with_seed`、旧版主世界 `scale` 不是 1/4/16/64/256、或末地 `scale == 1` 时会 panic；`get_config` 对版本不支持的结构返回 `None`；`get_structure_pos` 对该 region 不生成的情况返回 `None`。
+此外注意：`Generator::gen_biomes` 在未调用 `with_seed`、B1.8–1.17 主世界 `scale` 不是 1/4/16/64/256（B1.7- 接受任意 2 的幂）、或末地 `scale == 1` 时会 panic；`get_config` 对版本不支持的结构返回 `None`；`get_structure_pos` 对该 region 不生成的情况返回 `None`。
 
 ## License
 

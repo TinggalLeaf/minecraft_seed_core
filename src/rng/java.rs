@@ -110,6 +110,40 @@ impl JavaRandom {
     }
 }
 
+/// `mulInv`（cubiomes `rng.h`）：求模逆元 `(1/x) mod m`，扩展欧几里得。
+///
+/// 假设 `x`、`m` 为正（小于 2⁶³）且互素；无解时返回 0。四连底座搜索
+/// （`structure::quadbase`）用它求 region 平移常数 `132897987541` 对
+/// 2^n 的模逆。
+pub fn mul_inv(x: u64, m: u64) -> u64 {
+    if m as i64 <= 1 {
+        return 0; // 无解
+    }
+    let n = m;
+    let mut a = 0u64;
+    let mut b = 1u64;
+    let mut x = x;
+    let mut m = m;
+
+    while x as i64 > 1 {
+        if m == 0 {
+            return 0; // x 与 m 不互素
+        }
+        let q = x / m;
+        let t = m;
+        m = x % m;
+        x = t;
+        let t = a;
+        a = b.wrapping_sub(q.wrapping_mul(a));
+        b = t;
+    }
+
+    if (b as i64) < 0 {
+        b = b.wrapping_add(n);
+    }
+    b
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

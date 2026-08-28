@@ -1,12 +1,24 @@
 //! Minecraft 版本与维度枚举，对齐 cubiomes 的 `MCVersion` / `Dimension`。
 //!
-//! mcseedmap.com 支持 Java 1.7 到最新正式版；枚举按发布时间排序，
-//! 可直接用 `>=` 比较版本先后（如 `version >= McVersion::V1_18`）。
+//! 支持 Beta 1.7 到最新正式版；枚举按发布时间排序，可直接用 `>=`
+//! 比较版本先后（如 `version >= McVersion::V1_18`）。
 
-/// Minecraft Java 版版本号（`V1_X` 表示该大版本的最新补丁，与 cubiomes 一致）。
+/// Minecraft 版本号（`B1_X` 为 Beta 版本，`V1_X` 表示该大版本的最新补丁，
+/// 与 cubiomes 一致）。
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
 #[repr(u8)]
 pub enum McVersion {
+    /// Beta 1.7（cubiomes `MC_B1_7`）。
+    B1_7,
+    /// Beta 1.8（cubiomes `MC_B1_8`）。
+    B1_8,
+    V1_0,
+    V1_1,
+    V1_2,
+    V1_3,
+    V1_4,
+    V1_5,
+    V1_6,
     V1_7,
     V1_8,
     V1_9,
@@ -35,10 +47,19 @@ impl McVersion {
     /// 库支持的最新版本。
     pub const NEWEST: McVersion = McVersion::V1_21;
     /// 库支持的最早版本。
-    pub const OLDEST: McVersion = McVersion::V1_7;
+    pub const OLDEST: McVersion = McVersion::B1_7;
 
     /// 所有支持版本，按时间升序。
     pub const ALL: &'static [McVersion] = &[
+        McVersion::B1_7,
+        McVersion::B1_8,
+        McVersion::V1_0,
+        McVersion::V1_1,
+        McVersion::V1_2,
+        McVersion::V1_3,
+        McVersion::V1_4,
+        McVersion::V1_5,
+        McVersion::V1_6,
         McVersion::V1_7,
         McVersion::V1_8,
         McVersion::V1_9,
@@ -66,9 +87,19 @@ impl McVersion {
         self >= McVersion::V1_18
     }
 
-    /// 人类可读的版本字符串，如 `"1.18.2"`。
+    /// 人类可读的版本字符串，如 `"1.18.2"`（Beta 版本为 `"b1.7.3"` /
+    /// `"b1.8.1"`，对应 cubiomes `mc2str` 的 `"Beta 1.7"` / `"Beta 1.8"`）。
     pub fn name(self) -> &'static str {
         match self {
+            McVersion::B1_7 => "b1.7.3",
+            McVersion::B1_8 => "b1.8.1",
+            McVersion::V1_0 => "1.0.0",
+            McVersion::V1_1 => "1.1",
+            McVersion::V1_2 => "1.2.5",
+            McVersion::V1_3 => "1.3.2",
+            McVersion::V1_4 => "1.4.7",
+            McVersion::V1_5 => "1.5.2",
+            McVersion::V1_6 => "1.6.4",
             McVersion::V1_7 => "1.7.10",
             McVersion::V1_8 => "1.8.9",
             McVersion::V1_9 => "1.9.4",
@@ -113,6 +144,8 @@ mod tests {
         assert!(McVersion::V1_18.has_multi_noise_biomes());
         assert!(!McVersion::V1_17.has_multi_noise_biomes());
         assert_eq!(McVersion::NEWEST, *McVersion::ALL.last().unwrap());
+        assert_eq!(McVersion::OLDEST, McVersion::ALL[0]);
+        assert!(McVersion::B1_7 < McVersion::B1_8 && McVersion::B1_8 < McVersion::V1_0);
     }
 
     #[test]

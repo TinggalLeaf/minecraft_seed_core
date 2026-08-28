@@ -1,37 +1,48 @@
 //! 生物群系生成器，按版本模块化：
 //! - [`v1_18`]：多噪声（multi-noise）群系源（主世界 1.18+）
-//! - [`layers`]：分层（LayerStack）群系源（主世界 1.7–1.17）
+//! - [`layers`]：分层（LayerStack）群系源（主世界 B1.8–1.17）
 //! - [`nether`]：下界多噪声群系源（1.16+）
 //! - [`end`]：末地 simplex 高地噪声群系源（1.9+）
 //! - [`tables`]：1.18+ 群系参数搜索树数据（自动生成）
 //! - [`voronoi`]：1:1 比例的 voronoi 缩放助手
+//! - [`surface`]：地表高度近似 `map_approx_height`（`ApproxHeight`，
+//!   1:4 比例；对应 `mapApproxHeight`/`mapEndSurfaceHeight`）
 //!
 //! 统一入口为 [`Generator`]：`Generator::new(version)`
 //! → `with_seed(dim, seed)` → `get_biome(x, y, z)` / `gen_biomes(range)`。
 //!
 //! ## 覆盖范围
 //!
-//! - 主世界：**1.7–1.21.x**（1.7–1.17 分层 LayerStack，1.18+ 多噪声 +
-//!   群系树）。旧版仅支持 scale 1/4/16/64/256（`getLayerForScale` 的入口层）。
+//! - 主世界：**Beta 1.7–1.21.x**（B1.7- 气候噪声，B1.8–1.17 分层
+//!   LayerStack，1.18+ 多噪声 + 群系树）。分层路径仅支持 scale
+//!   1/4/16/64/256（`getLayerForScale` 的入口层）；beta 路径支持任意
+//!   2 的幂 scale（`genBiomeNoiseBetaScaled`）。
 //! - 下界：**1.16.1+**（多噪声）；更早版本按 cubiomes 行为填充
 //!   `nether_wastes`。
-//! - 末地：**1.9+**，scale 4/16/64+；scale 1（voronoi 平面缩放）未移植。
+//! - 末地：**1.9+**，scale 1/4/16/64+（scale 1 为 voronoi 缩放：1.14- 平面
+//!   旧算法，1.15+ 逐 y 层的 SHA 变体）。
 
 pub mod end;
 pub mod layers;
 pub mod nether;
+pub mod surface;
 pub mod tables;
 pub mod v1_18;
 pub mod voronoi;
 
 pub use end::EndNoise;
 pub use nether::NetherNoise;
+pub use surface::ApproxHeight;
 
 #[cfg(test)]
 mod tests;
 
+use std::cell::OnceCell;
+
 use crate::biome::BiomeId;
+use crate::noise::beta::{gen_biome_noise_beta_scaled, BiomeNoiseBeta, SurfaceNoiseBeta};
 use crate::noise::biome_noise::BiomeNoise;
+use crate::noise::surface::SurfaceNoise;
 use crate::version::{Dimension, McVersion};
 
 /// 群系生成区域（对应 cubiomes `Range`）。
@@ -105,6 +116,10 @@ pub struct Generator {
     nn: Option<NetherNoise>,
     en: Option<EndNoise>,
     ls: Option<layers::LayerStack>,
+    /// Beta 1.7 及更早的气候噪声群系源（`BiomeNoiseBeta`）。
+    bnb: Option<BiomeNoiseBeta>,
+    /// 地表噪声（`initSurfaceNoise`），首次使用时惰性初始化。
+    sn: OnceCell<SurfaceNoise>,
 }
 
 impl Generator {
@@ -128,6 +143,12 @@ impl Generator {
             nn: None,
             en: None,
             ls: None,
+            bnb: if mc <= McVersion::B1_7 {
+                Some(BiomeNoiseBeta::new_uninit())
+            } else {
+                None
+            },
+            sn: OnceCell::new(),
         }
     }
 
@@ -142,14 +163,19 @@ impl Generator {
     pub fn with_seed(mut self, dim: Dimension, seed: u64) -> Self {
         self.dim = Some(dim);
         self.seed = seed;
+        // 地表噪声缓存随种子/维度失效
+        self.sn = OnceCell::new();
 
         match dim {
             Dimension::Overworld => {
                 if self.mc.has_multi_noise_biomes() {
                     let bn = self.bn.as_mut().unwrap();
                     bn.set_biome_seed(seed, self.large);
+                } else if self.mc <= McVersion::B1_7 {
+                    // B1.7-：气候噪声群系源（setBetaBiomeSeed）
+                    self.bnb.as_mut().unwrap().set_beta_biome_seed(seed);
                 } else {
-                    // 1.7–1.17：分层群系源（setLayerSeed）
+                    // B1.8–1.17：分层群系源（setLayerSeed）
                     let mut ls = layers::LayerStack::new(self.mc, self.large);
                     ls.set_world_seed(seed);
                     self.ls = Some(ls);
@@ -192,6 +218,11 @@ impl Generator {
     /// 1.18+ 主世界的群系噪声（测试与调试用）。
     pub fn biome_noise(&self) -> Option<&BiomeNoise> {
         self.bn.as_ref()
+    }
+
+    /// 末地群系/高度噪声（1.9+ 且维度为末地时存在）。
+    pub fn end_noise(&self) -> Option<&EndNoise> {
+        self.en.as_ref()
     }
 
     /// （crate 内部）设置/恢复结构可行性过滤器（对应 C
@@ -245,16 +276,34 @@ impl Generator {
     /// # Panics
     ///
     /// - 未调用 [`Generator::with_seed`]；
-    /// - 主世界 <1.18 时 `scale` 不是 1/4/16/64/256；
-    /// - 末地 `scale == 1`（未移植，见 [`end`] 模块文档）。
+    /// - 主世界 B1.8–1.17 时 `scale` 不是 1/4/16/64/256；B1.7- 时
+    ///   `scale` 非正或非 2 的幂。
     pub fn gen_biomes(&self, r: Range) -> Vec<BiomeId> {
         match self.dim.expect("Generator: call with_seed() first") {
             Dimension::Overworld => {
                 if self.mc.has_multi_noise_biomes() {
                     let bn = self.bn.as_ref().unwrap();
                     v1_18::gen_biome_noise_scaled(bn, r, self.sha)
+                } else if self.mc <= McVersion::B1_7 {
+                    // B1.7-：气候噪声群系源；每次调用初始化地表噪声
+                    // （C 的 genBiomes 对 beta 同样现初始化；行为等价于
+                    // C 默认 flags=0，即启用海洋映射）
+                    let bnb = self.bnb.as_ref().expect("Generator: call with_seed() first");
+                    let snb = SurfaceNoiseBeta::new(self.seed);
+                    let mut plane = vec![0i32; (r.sx * r.sz) as usize];
+                    gen_biome_noise_beta_scaled(bnb, Some(&snb), &mut plane, Range { sy: 1, ..r });
+                    // 主世界无垂直噪声，2D 平面沿 y 复制
+                    let sy = if r.sy == 0 { 1 } else { r.sy };
+                    let mut out = Vec::with_capacity((r.sx * r.sz * sy) as usize);
+                    for _ in 0..sy {
+                        out.extend(plane.iter().map(|&v| {
+                            BiomeId::from_i32(v)
+                                .unwrap_or_else(|| panic!("Generator: beta 群系源产生未知群系 ID {v}"))
+                        }));
+                    }
+                    out
                 } else {
-                    // 1.7–1.17：分层群系源；主世界无垂直噪声，2D 平面沿 y 复制
+                    // B1.8–1.17：分层群系源；主世界无垂直噪声，2D 平面沿 y 复制
                     let ls = self.ls.as_ref().expect("Generator: call with_seed() first");
                     layers::gen_biomes(ls, r)
                 }

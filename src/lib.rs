@@ -6,14 +6,17 @@
 //!
 //! ## 模块结构
 //!
-//! - [`version`]：Minecraft 版本枚举（Java 1.7 – 1.21.x），按 cubiomes 的
-//!   `MCVersion` 对齐，按序可比较。
+//! - [`version`]：Minecraft 版本枚举（Java Beta 1.7 – 1.21.x），按 cubiomes
+//!   的 `MCVersion` 对齐，按序可比较。
 //! - [`biome`]：全部生物群系 ID 常量与版本存在性查询。
 //! - [`rng`]：Java LCG 随机数、Xoroshiro128++（1.18+）、MC 种子流水线
 //!   （layerSalt / startSeed / chunkSeed）。
-//! - [`noise`]：Perlin / 倍频（Octave）/ DoublePerlin 噪声（1.18+ 气候采样）。
-//! - [`generator`]：按版本划分的生物群系生成器（1.18+ 多噪声 / 1.7–1.17 分层）。
-//! - [`structure`]：结构候选位置计算（region 种子 + salt 规则）。
+//! - [`noise`]：Perlin / 倍频（Octave）/ DoublePerlin 噪声（1.18+ 气候采样）
+//!   与 Beta 1.7- 的气候/地形噪声（[`noise::beta`]）。
+//! - [`generator`]：按版本划分的生物群系生成器（Beta 1.7- 气候噪声 /
+//!   B1.8–1.17 分层 / 1.18+ 多噪声）。
+//! - [`structure`]：结构候选位置计算（region 种子 + salt 规则）与四连底座
+//!   高速搜索（quadbase）。
 //! - [`bedrock`]：Bedrock 版计算（MT19937、结构散布、出生点、要塞，
 //!   对齐网站 `bedrock.wasm`）。
 //!

@@ -1,9 +1,10 @@
-//! 出生点估计：移植 cubiomes `finders.c` 的 `locateBiome` 与
-//! `estimateSpawn`（含 1.18+ 的适应度搜索 `findFittestPos`）。
+//! 出生点：移植 cubiomes `finders.c` 的 `locateBiome` 与
+//! `estimateSpawn`（含 1.18+ 的适应度搜索 `findFittestPos`），以及
+//! 精确出生点 `getSpawn`（估计结果再经 [`Generator::map_approx_height`]
+//! 的地表高度螺旋修正）。
 //!
-//! **未覆盖**：`getSpawn`（精确出生点）依赖 `SurfaceNoise` 与
-//! `mapApproxHeight`（generator.c 的地表高度近似），该部分噪声管线尚未
-//! 移植，见模块汇报。mcseedmap 使用的近似出生点即 [`estimate_spawn`]。
+//! 网站（mcseedmap.com）的 `find_spawn` 即 `getSpawn`；
+//! [`estimate_spawn`] 只是其中的群系/气候估计步骤。
 
 use crate::biome::BiomeId;
 use crate::generator::v1_18::sample_biome_noise;
@@ -216,24 +217,41 @@ const SPAWN_BIOMES_17: u64 = (1u64 << BiomeId::Forest as i32)
     | (1u64 << BiomeId::Jungle as i32)
     | (1u64 << BiomeId::JungleHills as i32);
 
+// 1.0 及更早的可出生群系（C 的窄集合：forest|swamp|taiga）
+const SPAWN_BIOMES_10: u64 = (1u64 << BiomeId::Forest as i32)
+    | (1u64 << BiomeId::Swamp as i32)
+    | (1u64 << BiomeId::Taiga as i32);
+
 /// `estimateSpawn`：世界的近似出生点。
 ///
-/// - 1.7–1.17：在 ±256 方块内随机选取可行群系位置（`locateBiome`），
-///   找不到时退回 `(8, 8)`；
+/// - Beta 1.7-：恒为 `(0, 0)`（C 注释："finds a random sandblock"，位置
+///   不固定，直接返回原点）；
+/// - B1.8–1.17：在 ±256 方块内随机选取可行群系位置（`locateBiome`），
+///   找不到时退回 `(8, 8)`；1.0- 的可行群系集合更窄
+///   （forest/swamp/taiga）；
 /// - 1.18+：气候参数适应度搜索。
 ///
-/// 生成器须已按主世界与目标种子初始化。
+/// 生成器须已按主世界与目标种子初始化（B1.7- 除外，不读生成器）。
 pub fn estimate_spawn(g: &Generator) -> Pos {
     estimate_spawn_rng(g).0
 }
 
 /// 同 [`estimate_spawn`]，附带推进后的随机状态（C 的 `rng` 输出参数）。
+///
+/// 注意 C 在 B1.7- 分支不初始化 `rng`（`getSpawn` 随即直接返回，从不
+/// 读取）；这里返回一个未消耗的新状态作为占位。
 pub(crate) fn estimate_spawn_rng(g: &Generator) -> (Pos, JavaRandom) {
-    if g.version() <= McVersion::V1_17 {
-        // C 中 `mc <= MC_1_0` 的可行集更窄，本库版本下界 1.7，恒用 1.7+ 集合
+    if g.version() <= McVersion::B1_7 {
+        (Pos { x: 0, z: 0 }, JavaRandom::new(g.seed() as i64))
+    } else if g.version() <= McVersion::V1_17 {
+        let spawn_biomes = if g.version() <= McVersion::V1_0 {
+            SPAWN_BIOMES_10
+        } else {
+            SPAWN_BIOMES_17
+        };
         let mut s = JavaRandom::new(g.seed() as i64);
         let mut found = 0;
-        let mut spawn = locate_biome(g, 0, 63, 0, 256, SPAWN_BIOMES_17, 0, &mut s, Some(&mut found));
+        let mut spawn = locate_biome(g, 0, 63, 0, 256, spawn_biomes, 0, &mut s, Some(&mut found));
         if found == 0 {
             spawn.x = 8;
             spawn.z = 8;
@@ -242,4 +260,129 @@ pub(crate) fn estimate_spawn_rng(g: &Generator) -> (Pos, JavaRandom) {
     } else {
         (find_fittest_pos(g), JavaRandom::new(g.seed() as i64))
     }
+}
+
+// ============================================================================
+// getSpawn：精确出生点（估计 + 地表高度螺旋修正）
+// ============================================================================
+
+/// `getSpawn`：世界的精确出生点（方块坐标）。
+///
+/// 在 [`estimate_spawn`] 的基础上做地形修正：
+///
+/// - **≤1.12**：随机抖动搜索，直到近似地表高度不低于该群系的草方格
+///   生成高度（`grass`）；
+/// - **1.13–1.17**：绕估计点做区块级螺旋扫描（±16 区块），取第一个
+///   满足草方格条件的 1:4 采样点；
+/// - **1.18+**：绕估计点螺旋扫描（±5 区块，最多 121 次），取第一个
+///   地表高于海平面或为冻洋/冻河的点；找不到时退回估计点所在区块
+///   中心（1.13–1.17 同理，±16 区块扫完后退回区块中心）。
+///
+/// 与 C 一致：1.18+ 分支不使用估计阶段的 RNG（C 中该值此分支未初始化，
+/// 本实现返回的新状态不被读取）。
+pub fn get_spawn(g: &Generator) -> Pos {
+    let (mut spawn, mut rng) = estimate_spawn_rng(g);
+    let mc = g.version();
+
+    if mc <= McVersion::B1_7 {
+        // beta 分支：直接返回原点（不消耗 RNG）
+        return spawn;
+    }
+
+    if mc <= McVersion::V1_12 {
+        for _ in 0..1000 {
+            let a = g.map_approx_height(spawn.x >> 2, spawn.z >> 2, 1, 1);
+            let id = a.ids.as_ref().unwrap()[0];
+            let (_, _, grass) = crate::biome::biome_depth_and_scale(id as i32);
+            if grass > 0 && a.y[0] >= grass as f32 {
+                break;
+            }
+            spawn.x += rng.next_int_bound(64) - rng.next_int_bound(64);
+            spawn.z += rng.next_int_bound(64) - rng.next_int_bound(64);
+        }
+    } else if mc <= McVersion::V1_17 {
+        let (mut j, mut k, mut u, mut v) = (0, 0, 0, -1);
+        for _ in 0..1024 {
+            if j > -16 && j <= 16 && k > -16 && k <= 16 {
+                // 找服务器出生点所在区块
+                let cx0 = (spawn.x & !15) + j * 16;
+                let cz0 = (spawn.z & !15) + k * 16;
+                let a = g.map_approx_height(cx0 >> 2, cz0 >> 2, 4, 4);
+                let ids = a.ids.as_ref().unwrap();
+                let mut found = false;
+                for ii in 0..4 {
+                    for jj in 0..4 {
+                        let (_, _, grass) =
+                            crate::biome::biome_depth_and_scale(ids[(jj * 4 + ii) as usize] as i32);
+                        if grass <= 0 || a.y[(jj * 4 + ii) as usize] < grass as f32 {
+                            continue;
+                        }
+                        spawn.x = cx0 + ii * 4;
+                        spawn.z = cz0 + jj * 4;
+                        found = true;
+                        break;
+                    }
+                    if found {
+                        break;
+                    }
+                }
+                if found {
+                    return spawn;
+                }
+            }
+            if j == k || (j < 0 && j == -k) || (j > 0 && j == 1 - k) {
+                std::mem::swap(&mut u, &mut v);
+                u = -u;
+            }
+            j += u;
+            k += v;
+        }
+        // 区块中心
+        spawn.x = (spawn.x & !15) + 8;
+        spawn.z = (spawn.z & !15) + 8;
+    } else {
+        let (mut j, mut k, mut u, mut v) = (0, 0, 0, -1);
+        for _ in 0..121 {
+            if (-5..=5).contains(&j) && (-5..=5).contains(&k) {
+                let cx0 = (spawn.x & !15) + j * 16;
+                let cz0 = (spawn.z & !15) + k * 16;
+                let mut found = false;
+                for ii in 0..4 {
+                    for jj in 0..4 {
+                        let x = cx0 + ii * 4;
+                        let z = cz0 + jj * 4;
+                        let a = g.map_approx_height(x >> 2, z >> 2, 1, 1);
+                        let id = a.ids.as_ref().unwrap()[0];
+                        if a.y[0] > 63.0
+                            || id == BiomeId::FrozenOcean
+                            || id == BiomeId::DeepFrozenOcean
+                            || id == BiomeId::FrozenRiver
+                        {
+                            spawn.x = x;
+                            spawn.z = z;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if found {
+                        break;
+                    }
+                }
+                if found {
+                    return spawn;
+                }
+            }
+            if j == k || (j < 0 && j == -k) || (j > 0 && j == 1 - k) {
+                std::mem::swap(&mut u, &mut v);
+                u = -u;
+            }
+            j += u;
+            k += v;
+        }
+        // 区块中心
+        spawn.x = (spawn.x & !15) + 8;
+        spawn.z = (spawn.z & !15) + 8;
+    }
+
+    spawn
 }

@@ -28,10 +28,8 @@ pub fn is_stronghold_biome(mc: McVersion, id: i32) -> bool {
         return false;
     }
     match BiomeId::from_i32(id) {
-        // mc >= MC_1_7 恒真（本库最旧版本即 1.7）
-        Some(Plains | MushroomFields | TaigaHills) => true,
-        // mc <= MC_1_6 恒假
-        Some(Swamp) => false,
+        Some(Plains | MushroomFields | TaigaHills) => mc >= McVersion::V1_7,
+        Some(Swamp) => mc <= McVersion::V1_6,
         Some(River | FrozenRiver | Beach | SnowyBeach | SwampHills) => false,
         Some(MushroomFieldShore) => mc >= McVersion::V1_13,
         Some(StoneShore) => mc <= McVersion::V1_17,
@@ -124,8 +122,12 @@ impl StrongholdIter {
     /// `g` 应为已按主世界初始化的生成器；1.19.3+（`mc > 1.19.2`）可传
     /// `None`，跳过群系检查只迭代近似位置。
     ///
-    /// 返回这座之后还剩多少座要塞（C 的返回值）。
+    /// 返回这座之后还剩多少座要塞（C 的返回值）。Beta 1.7 及更早没有
+    /// 要塞（C 的 `else return 0` 分支）：直接返回 0，不消耗随机数。
     pub fn next(&mut self, g: Option<&Generator>) -> i32 {
+        if self.mc <= McVersion::B1_7 {
+            return 0;
+        }
         // 要塞可行群系集合（每次重建，与 C 一致；成本可忽略）
         let mut valid_b = 0u64;
         let mut valid_m = 0u64;
@@ -160,9 +162,7 @@ impl StrongholdIter {
                 }
             }
         } else {
-            // C: `else if (sh->mc >= MC_B1_8)`；本库版本下界 1.7 已满足该条件，
-            // C 的 `else return 0` 分支不可达。
-            let g = g.expect("StrongholdIter::next: 1.7–1.19.2 需要主世界生成器");
+            let g = g.expect("StrongholdIter::next: B1.8–1.19.2 需要主世界生成器");
             self.pos = locate_biome(
                 g,
                 self.nextapprox.x,

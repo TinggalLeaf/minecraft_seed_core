@@ -48,82 +48,14 @@ pub(crate) fn id_set_test(m_low: u64, m_mut: u64, id: i32) -> bool {
     }
 }
 
-/// `biomeExists`（限制在本库支持的 1.7+ 版本范围后的等价实现）。
-///
-/// C 里 `mc <= MC_1_0` 等更旧分支在本库恒不触发，已化简。
+/// `biomeExists`：群系在该版本是否存在（全版本保真，含 Beta 与 1.0–1.6；
+/// 实现集中在 [`BiomeId::exists_in`]）。
 pub fn biome_exists(mc: McVersion, id: i32) -> bool {
-    use BiomeId::*;
-    let b = match BiomeId::from_i32(id) {
-        Some(b) => b,
-        Option::None => return false,
-    };
-    if mc >= McVersion::V1_18 {
-        if (SoulSandValley as i32..=BasaltDeltas as i32).contains(&id)
-            || (SmallEndIslands as i32..=EndBarrens as i32).contains(&id)
-        {
-            return true;
-        }
-        if b == PaleGarden {
-            return mc >= McVersion::V1_21;
-        }
-        if b == CherryGrove {
-            return mc >= McVersion::V1_20;
-        }
-        if b == DeepDark || b == MangroveSwamp {
-            return mc >= McVersion::V1_19_2;
-        }
-        return matches!(
-            b,
-            Ocean | Plains | Desert | Mountains | Forest | Taiga | Swamp | River
-                | NetherWastes | TheEnd | FrozenOcean | FrozenRiver | SnowyTundra
-                | MushroomFields | Beach | Jungle | JungleEdge | DeepOcean | StoneShore
-                | SnowyBeach | BirchForest | DarkForest | SnowyTaiga | GiantTreeTaiga
-                | WoodedMountains | Savanna | SavannaPlateau | Badlands
-                | WoodedBadlandsPlateau | WarmOcean | LukewarmOcean | ColdOcean
-                | DeepWarmOcean | DeepLukewarmOcean | DeepColdOcean | DeepFrozenOcean
-                | SunflowerPlains | GravellyMountains | FlowerForest | IceSpikes
-                | TallBirchForest | GiantSpruceTaiga | ShatteredSavanna | ErodedBadlands
-                | BambooJungle | DripstoneCaves | LushCaves | Meadow | Grove
-                | SnowySlopes | StonyPeaks | JaggedPeaks | FrozenPeaks
-        );
-    }
-
-    // mc 1.7–1.17（C 中 `mc <= MC_1_0` 的分支对本库版本恒不触发）
-    if (Ocean as i32..=MountainEdge as i32).contains(&id) {
-        return true;
-    }
-    // jungle..=jungle_hills 要求 mc >= MC_1_2，恒真
-    if (Jungle as i32..=JungleHills as i32).contains(&id) {
-        return true;
-    }
-    // jungle_edge..=badlands_plateau 要求 mc >= MC_1_7，恒真
-    if (JungleEdge as i32..=BadlandsPlateau as i32).contains(&id) {
-        return true;
-    }
-    if (SmallEndIslands as i32..=EndBarrens as i32).contains(&id) {
-        return mc >= McVersion::V1_9;
-    }
-    if (WarmOcean as i32..=DeepFrozenOcean as i32).contains(&id) {
-        return mc >= McVersion::V1_13;
-    }
-    match b {
-        TheVoid => mc >= McVersion::V1_9,
-        // 突变变体要求 mc >= MC_1_7，恒真
-        SunflowerPlains | DesertLakes | GravellyMountains | FlowerForest | TaigaMountains
-        | SwampHills | IceSpikes | ModifiedJungle | ModifiedJungleEdge | TallBirchForest
-        | TallBirchHills | DarkForestHills | SnowyTaigaMountains | GiantSpruceTaiga
-        | GiantSpruceTaigaHills | ModifiedGravellyMountains | ShatteredSavanna
-        | ShatteredSavannaPlateau | ErodedBadlands | ModifiedWoodedBadlandsPlateau
-        | ModifiedBadlandsPlateau => true,
-        BambooJungle | BambooJungleHills => mc >= McVersion::V1_14,
-        SoulSandValley | CrimsonForest | WarpedForest | BasaltDeltas => {
-            mc >= McVersion::V1_16_1
-        }
-        DripstoneCaves | LushCaves => mc >= McVersion::V1_17,
-        _ => false,
+    match BiomeId::from_i32(id) {
+        Some(b) => b.exists_in(mc),
+        Option::None => false,
     }
 }
-
 /// `isOverworld`：群系是否为主世界群系（含版本存在性检查）。
 pub fn is_overworld(mc: McVersion, id: i32) -> bool {
     use BiomeId::*;
@@ -137,8 +69,8 @@ pub fn is_overworld(mc: McVersion, id: i32) -> bool {
     }
     match BiomeId::from_i32(id) {
         Some(NetherWastes | TheEnd) => false,
-        Some(FrozenOcean) => mc >= McVersion::V1_13, // mc <= MC_1_6 恒不触发
-        Some(MountainEdge) => false,                  // mc <= MC_1_6 恒不触发
+        Some(FrozenOcean) => mc <= McVersion::V1_6 || mc >= McVersion::V1_13,
+        Some(MountainEdge) => mc <= McVersion::V1_6,
         Some(DeepWarmOcean | TheVoid) => false,
         Some(TallBirchForest) => !(McVersion::V1_9..=McVersion::V1_10).contains(&mc),
         Some(DripstoneCaves | LushCaves) => mc >= McVersion::V1_18,
@@ -445,6 +377,12 @@ pub(crate) fn are_biomes_viable(
 ///
 /// 生成器须已按正确版本/维度/种子初始化。C 会对生成器做临时修改并在返回
 /// 前恢复；本实现只读。
+///
+/// # Panics
+///
+/// Beta 1.7 及更早的主世界：C 的 `isViableStructurePos` 对 beta 只做了
+/// 半成品支持（引用了不存在的分层群系源），这里同样不可用——
+/// `set_viable_filter` 会因没有 LayerStack 而 panic。
 pub fn is_viable_structure_pos(
     stype: StructureType,
     g: &Generator,
@@ -820,4 +758,312 @@ fn overworld_viable_pos(
         // C 的 default 分支：未知类型/维度组合打印错误并视为不可行
         _ => 0,
     }
+}
+
+// ============================================================================
+// 地形级可行性（finders.c 的 isViableStructureTerrain / isViableEndCityTerrain
+// / isEndChunkEmpty）
+// ============================================================================
+
+use crate::generator::end::{get_surface_height, END_LOWER_DROP, END_UPPER_DROP};
+use crate::noise::surface::SurfaceNoise;
+
+
+/// `isEndChunkEmpty` 的反演钳制表：`(30*(1-l)/l + 3000*(1-u)) / u` 的逆，
+/// 用于把"噪声是否可能超过阈值"转换成 `sampleSurfaceNoiseBetween` 的
+/// 早退区间（译自 C 注释）。
+const END_INVERSE_DROP: [f64; 19] = [
+    1e9, 1e9, 180.0, 75.0, 40.0, 22.5, 12.0, 5.0, // 0-7
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, // 8-14
+    1000.0 / 21.0, 3000.0 / 31.0, 9000.0 / 61.0, 200.0, // 15-18
+];
+
+/// `isViableStructureTerrain`：结构的地形级可行性检查（1.18+ 主世界）。
+///
+/// 用 depth 气候参数（≈地表高度，0.5 约等于海平面）检查结构 footprint
+/// 的四角：任一角 `depth < 0.48` 则不可行。只覆盖沙漠神殿、丛林神庙与
+/// 林地府邸（含随机朝向决定的 footprint 方向）；其余结构类型以及
+/// 1.17- 恒为 `true`（与 C 一致）。
+///
+/// 坐标 `(x, z)` 为方块级（通常来自 [`get_structure_pos`]）。
+pub fn is_viable_structure_terrain(stype: StructureType, g: &Generator, x: i32, z: i32) -> bool {
+    let mc = g.version();
+    if mc <= McVersion::V1_17 {
+        return true;
+    }
+    let (x, z, sx, sz) = match stype {
+        StructureType::DesertPyramid => (x, z, 21, 21),
+        StructureType::JungleTemple => (x, z, 12, 15),
+        StructureType::Mansion => {
+            let cx = x >> 4;
+            let cz = z >> 4;
+            let mut rng = chunk_generate_rnd(g.seed(), cx, cz);
+            let rot = rng.next_int_bound(4);
+            let (mut sx, mut sz) = (5, 5);
+            if rot == 0 {
+                sx = -5;
+            }
+            if rot == 1 {
+                sx = -5;
+                sz = -5;
+            }
+            if rot == 2 {
+                sz = -5;
+            }
+            (cx * 16 + 7, cz * 16 + 7, sx, sz)
+        }
+        _ => return true,
+    };
+
+    // 以 depth 参数近似地表高度（0.5 ≈ 海平面）
+    let corners = [
+        (x as f64 / 4.0, z as f64 / 4.0),
+        ((x + sx) as f64 / 4.0, (z + sz) as f64 / 4.0),
+        (x as f64 / 4.0, (z + sz) as f64 / 4.0),
+        ((x + sx) as f64 / 4.0, z as f64 / 4.0),
+    ];
+    let bn = g.biome_noise().expect("1.18+ 主世界应有 BiomeNoise");
+    for &(cx, cz) in &corners {
+        let depth = bn.sample_depth(cx, cz);
+        if depth < 0.48 {
+            return false;
+        }
+    }
+    true
+}
+
+/// `isViableEndCityTerrain`：末地城的地形级可行性。
+///
+/// 返回区块四角（含随机朝向决定的 5 方块偏移）的最小地表高度；`< 60`
+/// 时返回 0（不可行），否则返回该高度（与 C 的返回值语义一致）。
+///
+/// `sn` 须为 `SurfaceNoise::new(Dimension::End, seed)`（末地维度下
+/// [`Generator::surface_noise`] 等价）。
+pub fn is_viable_end_city_terrain(
+    g: &Generator,
+    sn: &SurfaceNoise,
+    block_x: i32,
+    block_z: i32,
+) -> i32 {
+    const Y0: i32 = 15;
+    const Y1: i32 = 18;
+    const YN: usize = (Y1 - Y0 + 1) as usize;
+
+    let en = g.end_noise().expect("isViableEndCityTerrain: 生成器须为末地维度");
+    let chunk_x = block_x >> 4;
+    let chunk_z = block_z >> 4;
+    let block_x = chunk_x * 16 + 7;
+    let block_z = chunk_z * 16 + 7;
+    let cellx = block_x >> 3;
+    let cellz = block_z >> 3;
+
+    // ncol[i][j]：(cellx+i, cellz+j) 的噪声列
+    let mut ncol = [[[0.0f64; YN]; 3]; 3];
+    {
+        en.sample_noise_column_end(sn, &mut ncol[0][0], cellx, cellz, Y0, Y1);
+        en.sample_noise_column_end(sn, &mut ncol[0][1], cellx, cellz + 1, Y0, Y1);
+        en.sample_noise_column_end(sn, &mut ncol[1][0], cellx + 1, cellz, Y0, Y1);
+        en.sample_noise_column_end(sn, &mut ncol[1][1], cellx + 1, cellz + 1, Y0, Y1);
+
+        let h00 = get_surface_height(
+            &ncol[0][0], &ncol[0][1], &ncol[1][0], &ncol[1][1],
+            Y0, Y1, 4,
+            (block_x & 7) as f64 / 8.0, (block_z & 7) as f64 / 8.0,
+        );
+
+        let mut cs = if en.mc() <= McVersion::V1_18 {
+            crate::rng::JavaRandom::new(
+                (chunk_x as u64).wrapping_add((chunk_z as u64).wrapping_mul(10387313)) as i64,
+            )
+        } else {
+            chunk_generate_rnd(g.seed(), chunk_x, chunk_z)
+        };
+
+        let (h01, h10, h11);
+        match cs.next_int_bound(4) {
+            0 => {
+                // (++) 0
+                en.sample_noise_column_end(sn, &mut ncol[0][2], cellx, cellz + 2, Y0, Y1);
+                en.sample_noise_column_end(sn, &mut ncol[1][2], cellx + 1, cellz + 2, Y0, Y1);
+                en.sample_noise_column_end(sn, &mut ncol[2][0], cellx + 2, cellz, Y0, Y1);
+                en.sample_noise_column_end(sn, &mut ncol[2][1], cellx + 2, cellz + 1, Y0, Y1);
+                en.sample_noise_column_end(sn, &mut ncol[2][2], cellx + 2, cellz + 2, Y0, Y1);
+                h01 = get_surface_height(
+                    &ncol[0][1], &ncol[0][2], &ncol[1][1], &ncol[1][2],
+                    Y0, Y1, 4,
+                    (block_x & 7) as f64 / 8.0, ((block_z + 5) & 7) as f64 / 8.0,
+                );
+                h10 = get_surface_height(
+                    &ncol[1][0], &ncol[1][1], &ncol[2][0], &ncol[2][1],
+                    Y0, Y1, 4,
+                    ((block_x + 5) & 7) as f64 / 8.0, (block_z & 7) as f64 / 8.0,
+                );
+                h11 = get_surface_height(
+                    &ncol[1][1], &ncol[1][2], &ncol[2][1], &ncol[2][2],
+                    Y0, Y1, 4,
+                    ((block_x + 5) & 7) as f64 / 8.0, ((block_z + 5) & 7) as f64 / 8.0,
+                );
+            }
+            1 => {
+                // (-+) 90
+                en.sample_noise_column_end(sn, &mut ncol[0][2], cellx, cellz + 2, Y0, Y1);
+                en.sample_noise_column_end(sn, &mut ncol[1][2], cellx + 1, cellz + 2, Y0, Y1);
+                h01 = get_surface_height(
+                    &ncol[0][1], &ncol[0][2], &ncol[1][1], &ncol[1][2],
+                    Y0, Y1, 4,
+                    (block_x & 7) as f64 / 8.0, ((block_z + 5) & 7) as f64 / 8.0,
+                );
+                h10 = get_surface_height(
+                    &ncol[0][0], &ncol[0][1], &ncol[1][0], &ncol[1][1],
+                    Y0, Y1, 4,
+                    ((block_x - 5) & 7) as f64 / 8.0, (block_z & 7) as f64 / 8.0,
+                );
+                h11 = get_surface_height(
+                    &ncol[0][1], &ncol[0][2], &ncol[1][1], &ncol[1][2],
+                    Y0, Y1, 4,
+                    ((block_x - 5) & 7) as f64 / 8.0, ((block_z + 5) & 7) as f64 / 8.0,
+                );
+            }
+            2 => {
+                // (--) 180
+                h01 = get_surface_height(
+                    &ncol[0][0], &ncol[0][1], &ncol[1][0], &ncol[1][1],
+                    Y0, Y1, 4,
+                    (block_x & 7) as f64 / 8.0, ((block_z - 5) & 7) as f64 / 8.0,
+                );
+                h10 = get_surface_height(
+                    &ncol[0][0], &ncol[0][1], &ncol[1][0], &ncol[1][1],
+                    Y0, Y1, 4,
+                    ((block_x - 5) & 7) as f64 / 8.0, (block_z & 7) as f64 / 8.0,
+                );
+                h11 = get_surface_height(
+                    &ncol[0][0], &ncol[0][1], &ncol[1][0], &ncol[1][1],
+                    Y0, Y1, 4,
+                    ((block_x - 5) & 7) as f64 / 8.0, ((block_z - 5) & 7) as f64 / 8.0,
+                );
+            }
+            3 => {
+                // (+-) 270
+                en.sample_noise_column_end(sn, &mut ncol[2][0], cellx + 2, cellz, Y0, Y1);
+                en.sample_noise_column_end(sn, &mut ncol[2][1], cellx + 2, cellz + 1, Y0, Y1);
+                h01 = get_surface_height(
+                    &ncol[0][0], &ncol[0][1], &ncol[1][0], &ncol[1][1],
+                    Y0, Y1, 4,
+                    (block_x & 7) as f64 / 8.0, ((block_z - 5) & 7) as f64 / 8.0,
+                );
+                h10 = get_surface_height(
+                    &ncol[1][0], &ncol[1][1], &ncol[2][0], &ncol[2][1],
+                    Y0, Y1, 4,
+                    ((block_x + 5) & 7) as f64 / 8.0, (block_z & 7) as f64 / 8.0,
+                );
+                h11 = get_surface_height(
+                    &ncol[1][0], &ncol[1][1], &ncol[2][0], &ncol[2][1],
+                    Y0, Y1, 4,
+                    ((block_x + 5) & 7) as f64 / 8.0, ((block_z - 5) & 7) as f64 / 8.0,
+                );
+            }
+            _ => return 0, // 不可达（next_int_bound(4) ∈ 0..4）
+        }
+        let h = h00.min(h01).min(h10).min(h11);
+        if h >= 60 { h } else { 0 }
+    }
+}
+
+/// `isEndChunkEmpty`：末地 chunk 是否完全无陆地（小末地岛与地形噪声
+/// 双重判定，含 `inverse_drop` 早退优化）。
+///
+/// 用于折跃门落点搜索等；返回 `true` 表示空区块。
+pub fn is_end_chunk_empty(
+    en: &crate::generator::EndNoise,
+    sn: &SurfaceNoise,
+    seed: u64,
+    chunk_x: i32,
+    chunk_z: i32,
+) -> bool {
+    let x = chunk_x * 2;
+    let z = chunk_z * 2;
+    let mut depth = [[0.0f64; 3]; 3];
+
+    // 检查小末地岛是否落入该 chunk
+    for j in -1..=1 {
+        for i in -1..=1 {
+            for isle in super::region::get_end_islands(en.mc(), seed, chunk_x + i, chunk_z + j) {
+                if isle.x + isle.r <= chunk_x * 16 {
+                    continue;
+                }
+                if isle.z + isle.r <= chunk_z * 16 {
+                    continue;
+                }
+                if isle.x - isle.r > chunk_x * 16 + 15 {
+                    continue;
+                }
+                if isle.z - isle.r > chunk_z * 16 + 15 {
+                    continue;
+                }
+                let id = en.map_end_biome(isle.x >> 4, isle.z >> 4, 1, 1)[0];
+                if id == BiomeId::SmallEndIslands {
+                    return false;
+                }
+            }
+        }
+    }
+
+    const EPS: f64 = 0.001;
+
+    // 内部 depth 值是否已蕴含方块
+    for (i, row) in depth.iter_mut().enumerate().take(2) {
+        for (j, cell) in row.iter_mut().enumerate().take(2) {
+            *cell = (en.get_end_height_noise(x + i as i32, z + j as i32, 0) - 8.0) as f64;
+            for k in 8..=14 {
+                let u = END_UPPER_DROP[k];
+                let l = END_LOWER_DROP[k];
+                let mut noise = *cell;
+                let pivot = END_INVERSE_DROP[k] - noise;
+                noise += sn.sample_between(
+                    x + i as i32, k as i32, z + j as i32, pivot - EPS, pivot + EPS,
+                );
+                let noise = crate::noise::perlin::lerp(u, -3000.0, noise);
+                let noise = crate::noise::perlin::lerp(l, -30.0, noise);
+                if noise > 0.0 {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // 邻接 chunk 边界的 depth
+    for (i, row) in depth.iter_mut().enumerate() {
+        row[2] = (en.get_end_height_noise(x + i as i32, z + 2, 0) - 8.0) as f64;
+    }
+    for (j, cell) in depth[2].iter_mut().enumerate().take(2) {
+        *cell = (en.get_end_height_noise(x + 2, z + j as i32, 0) - 8.0) as f64;
+    }
+
+    // 若所有噪声值都不可能生成方块则为空
+    let mut check_full = false;
+    'outer: for (i, row) in depth.iter().enumerate() {
+        for (j, &base) in row.iter().enumerate() {
+            for k in 2..18 {
+                let u = END_UPPER_DROP[k];
+                let l = END_LOWER_DROP[k];
+                let mut noise = base;
+                let pivot = END_INVERSE_DROP[k] - noise;
+                noise += sn.sample_between(
+                    x + i as i32, k as i32, z + j as i32, pivot - EPS, pivot + EPS,
+                );
+                let noise = crate::noise::perlin::lerp(u, -3000.0, noise);
+                let noise = crate::noise::perlin::lerp(l, -30.0, noise);
+                if noise > 0.0 {
+                    check_full = true;
+                    break 'outer;
+                }
+            }
+        }
+    }
+    if !check_full {
+        return true;
+    }
+
+    let y = en.map_end_surface_height(sn, chunk_x * 16, chunk_z * 16, 16, 16, 1, 0);
+    y.iter().all(|&v| v == 0.0)
 }
