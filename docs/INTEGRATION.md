@@ -360,7 +360,7 @@ let slime = is_slime_chunk(seed, x >> 4, z >> 4); // 区块坐标，与版本无
 
 以下逐项以源码为准；对接时**不要**依赖：
 
-1. **Bedrock 带群系过滤版结构定位**：`bedrock` 模块已实现网站的非过滤版全部功能（结构散布/出生点/要塞，见 README「Bedrock 版支持」）；带群系过滤的 `be_get_filtered_structures_in_regions` 网站自身未使用，故未实现。Bedrock 群系底图在网站上就是复用 Java 引擎渲染的，直接用本库 Java 版 `Generator` 即可。`McVersion` 均为 Java 版本号，Bedrock 版本用 `bedrock::BedrockVersion`。
+1. ~~Bedrock 带群系过滤版结构定位~~（**已实现**）：`bedrock::structures_in_regions_filtered` 完整移植了 wasm 的 `be_get_filtered_structures_in_regions`（func21），含 54 层 Bedrock 群系层栈（`bedrock::layers::LayerStack`）与 9 种结构的过滤规则（村庄/沙漠神殿/女巫小屋/丛林神庙/雪屋/海底神殿双段/林地府邸/埋藏的宝藏/掠夺者前哨站），与网站 wasm 91 用例 × 15 类型逐一对拍（`tests/bedrock_filtered_consistency.rs`）。注意 mcseedmap.com 自身未启用此版（其 bedrock-worker.js 注释说明底图复用 Java 引擎），Bedrock 群系底图直接用本库 Java 版 `Generator` 即可。`McVersion` 均为 Java 版本号，Bedrock 版本用 `bedrock::BedrockVersion`。
 2. ~~精确出生点 `getSpawn`~~（已移植：`structure::get_spawn`，依赖的
    `SurfaceNoise` / `Generator::map_approx_height` 地表高度管线已一并移植，
    见 `tests/bundle_b_golden.rs`）。

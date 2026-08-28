@@ -12,6 +12,7 @@
 //! 全部函数逐指令移植自 `reference/site/bedrock.wasm`（见 `docs/INTEGRATION.md`），
 //! 并由 `tests/bedrock_consistency.rs` 与网站 WASM 输出对拍。
 
+#[doc(hidden)] pub mod layers; // 仅供一致性测试逐层校验群系层栈
 #[doc(hidden)] pub mod mt; // 仅供一致性测试直接校验 MT19937 向量
 mod trig;
 mod version;
@@ -21,6 +22,6 @@ mod structure;
 pub use spawn::{get_spawn, get_strongholds};
 pub use structure::{
     find_structures, get_config, get_config_raw, get_structure_pos, structures_in_regions,
-    BeStructureConfig, BeStructureType,
+    structures_in_regions_filtered, BeStructureConfig, BeStructureType,
 };
 pub use version::BedrockVersion;

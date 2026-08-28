@@ -110,13 +110,13 @@ Bedrock 模块（`minecraft_seed_core::bedrock`）与 Java 版是两套独立算
 - 版本枚举为 `BedrockVersion::V1_16_0` … `V26_50`（对应网站 wasm 的 mcVersion 14…28），`BedrockVersion::name()` 给出 `"1.21.50"` 等字符串；
 - `bedrock::get_config` 给出 spacing/separation/salt/mt_count 配置；`structures_in_regions`（以原点为中心 ±range region）与 `find_structures`（以任意方块坐标为中心）返回全部候选位置；`get_spawn` / `get_strongholds` 与网站输出逐位一致（要塞的 sin/cos 是 wasm 内嵌 musl 变体的逐指令移植，见 `src/bedrock/trig.rs`）。
 
-Bedrock 侧**未实现**：带群系过滤的 `be_get_filtered_structures_in_regions`（网站自身也未使用，其 Bedrock 群系底图直接复用 Java 引擎渲染）；Bedrock 独立群系生成器（不存在于网站引擎中）。
+另提供 `bedrock::structures_in_regions_filtered`（wasm `be_get_filtered_structures_in_regions` 的完整移植：54 层 Bedrock 群系层栈 + 9 种结构的过滤规则，与网站 wasm 对拍全绿；网站自身未启用此版）。Bedrock 侧**不存在**独立群系生成器（网站引擎中本就没有，底图复用 Java 引擎）。
 
 ## 已知限制
 
 以下功能 cubiomes 有而本库**未移植**（对接时请勿依赖）：
 
-- **Bedrock 带群系过滤的结构定位**（`be_get_filtered_structures_in_regions`）：网站自身未使用（Bedrock 群系底图复用 Java 引擎），本库同样未实现；非过滤版已完整覆盖。
+- ~~Bedrock 带群系过滤的结构定位~~：已实现（`bedrock::structures_in_regions_filtered`，含 54 层群系层栈；网站自身未启用此版，仅为算法完整性移植）。
 - 末地群系的 scale 1（1:1 voronoi 平面缩放）：调用会 panic。
 - `biomfilter.c`（群系过滤器）—— 找种级批量工具（四连底座搜索 `quadbase.c` 已移植，见功能矩阵）。
 - Alpha 1.1 及更早版本（`McVersion` 下界为 Beta 1.7，对齐 cubiomes 的 `MC_B1_7`）。

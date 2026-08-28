@@ -246,6 +246,98 @@ pub fn find_structures(
     scatter(&config, seed, brx, brz, rad)
 }
 
+// ---- 群系过滤版（`be_get_filtered_structures_in_regions`，wasm func21）----
+//
+// func21 先调 func14 得到全部候选，再按结构类型做群系可行性过滤
+// （br_table 分派；无规则的类型直通）。过滤用层栈即 [`LayerStack`]
+// （54 层 Bedrock 群系层链，与版本无关，全版本共用同一层栈）。
+//
+// 注意：mcseedmap.com 自身未启用此版（其 bedrock-worker.js 注释说明
+// 地图底图复用 Java 引擎，群系上下文由底图提供），此处为完整性移植。
+
+use super::layers::LayerStack;
+
+/// 单条过滤规则：以候选方块坐标为中心、`radius` 方块半径内的所有 scale-4
+/// 格子群系都必须属于 `biomes`（对应 wasm f_f 调用）。
+struct FilterRule {
+    radius: i32,
+    biomes: &'static [i32],
+}
+
+/// 各结构类型的过滤规则表（func21 br_table + wasm 数据段的 -1 终止列表）。
+/// 海底神殿为两段与：r=16 深海集合 && r=29 全部海洋+河流。
+fn filter_rules(stype: BeStructureType) -> &'static [FilterRule] {
+    match stype {
+        BeStructureType::Village => &[FilterRule {
+            radius: 2,
+            biomes: &[1, 35, 12, 5, 19, 30, 31, 2],
+        }],
+        BeStructureType::DesertTemple => &[FilterRule {
+            radius: 0,
+            biomes: &[2, 17, 130],
+        }],
+        BeStructureType::WitchHut => &[FilterRule {
+            radius: 0,
+            // wasm 列表为 [6, 6]（重复项，原样保留语义）
+            biomes: &[6, 6],
+        }],
+        BeStructureType::JungleTemple => &[FilterRule {
+            radius: 0,
+            biomes: &[21, 22],
+        }],
+        BeStructureType::Igloo => &[FilterRule {
+            radius: 0,
+            biomes: &[12, 30],
+        }],
+        BeStructureType::OceanMonument => &[
+            FilterRule {
+                radius: 16,
+                biomes: &[24, 46, 42, 48, 44],
+            },
+            FilterRule {
+                radius: 29,
+                biomes: &[0, 24, 43, 45, 47, 41, 44, 42, 48, 46, 7, 11],
+            },
+        ],
+        BeStructureType::Mansion => &[FilterRule {
+            radius: 32,
+            biomes: &[29],
+        }],
+        BeStructureType::BuriedTreasure => &[FilterRule {
+            radius: 3,
+            biomes: &[16, 26, 25, 15],
+        }],
+        BeStructureType::PillagerOutpost => &[FilterRule {
+            radius: 0,
+            biomes: &[1, 129, 35, 12, 19, 5, 30, 31, 2],
+        }],
+        _ => &[],
+    }
+}
+
+/// `be_get_filtered_structures_in_regions`（wasm func21）：
+/// 与 [`structures_in_regions`] 相同，但只保留通过群系可行性过滤的候选。
+///
+/// 无过滤规则的类型（要塞、海底遗迹、沉船、废弃传送门、下界/末地结构等）
+/// 结果与非过滤版完全一致。mcseedmap.com 自身未启用此版。
+pub fn structures_in_regions_filtered(
+    version: BedrockVersion,
+    stype: BeStructureType,
+    seed: i64,
+    range: i32,
+) -> Vec<[i32; 2]> {
+    let candidates = structures_in_regions(version, stype, seed, range);
+    let rules = filter_rules(stype);
+    if rules.is_empty() {
+        return candidates;
+    }
+    let stack = LayerStack::new(seed);
+    candidates
+        .into_iter()
+        .filter(|[x, z]| rules.iter().all(|r| stack.check(*x, *z, r.radius, r.biomes)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,6 +12,13 @@
 >   （该分层代码存在于 wasm 中但服务于 filtered 版结构过滤，网站未使用）。
 > - 要塞的 sin/cos 是 wasm 内嵌的 **musl 变体**（`__rem_pio2` 常量表被截断定制），
 >   已逐指令移植到 `src/bedrock/trig.rs`；不能用 Rust std 的 sin/cos 替代。
+> - **过滤版（func21）已移植**（2026-08 补充）：`bedrock::structures_in_regions_filtered`
+>   + 54 层群系层栈 `bedrock::layers::LayerStack`，与 wasm 91 用例 × 15 类型对拍全绿
+>   （`tests/bedrock_filtered_consistency.rs`）。移植期修复了上一版层栈移植的 4 处
+>   反编译误读：f_db 的 SE 选择 `a==0` 分支（恒保持 SE，无 RNG）、f_ja 的 40/46
+>   邻居判定互换、f_la 的 B_i/B_j 南邻 select 极性（S∉M2 → 保持，S∈M2 → 25/26）。
+>   教训：wasm-decompile 的 `select_if(x, y, c)` 是 `c ? x : y`，br_table 标签的
+>   物理顺序与逻辑索引无关，歧义处必须以 WAT 指令（wasm-objdump -d）为准。
 
 > 本文档是 Bedrock 支持的交接文档：记录对 mcseedmap.com Bedrock 引擎
 > （`bedrock.wasm`）的全部侦察结论、已解码的数据表与移植计划。
