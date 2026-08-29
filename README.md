@@ -80,6 +80,15 @@ if let Some(pos) = get_structure_pos(StructureType::Village, McVersion::V1_20, 1
 - `cargo run --example seed_info`：出生点、要塞、出生点附近的史莱姆区块。
 - `cargo run --example find_structures`：扫描范围内某结构的候选位置并做群系可行性验证。
 - `cargo run --example biome_map`：生成群系区域并打印 ASCII 图。
+- `cargo run --example versions_demo`：全版本遍历同一种子的群系差异 + large biomes。
+- `cargo run --example dimensions`：下界/末地群系 + 折跃门定位。
+- `cargo run --example heightmap_spawn`：近似地表高度图 + 精确/估计出生点对比。
+- `cargo run --example climate_noise`：1.18+ 气候多噪声参数采样。
+- `cargo run --example structure_pieces`：末地城/堡垒部件树、旧版村庄房屋列表、结构变体。
+- `cargo run --example terrain_viability`：群系可行性与地形级可行性对比。
+- `cargo run --example quad_base --release`：四连女巫小屋底座判定与 region 扫描。
+- `cargo run --example bedrock_demo`：Bedrock 结构散布（含过滤版）、出生点、要塞。
+- `cargo run --example seed_search --release`：三种种子搜索 API（与网站语义一致）。
 - `cargo run --example perf_legacy --release`：旧版分层群系源的区域生成性能冒烟。
 
 详细对接文档（坐标语义、错误/边界语义、性能建议、未覆盖清单）见 [docs/INTEGRATION.md](docs/INTEGRATION.md)。
