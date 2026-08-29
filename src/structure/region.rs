@@ -308,7 +308,10 @@ pub fn get_structure_pos(
     match stype {
         Feature | DesertPyramid | JungleTemple | SwampHut | Igloo | Village | OceanRuin
         | Shipwreck | RuinedPortal | RuinedPortalN | AncientCity | TrailRuins
-        | TrialChambers => Some(get_feature_pos(&sconf, seed, reg_x, reg_z)),
+        | TrialChambers | AbandonedCamp => Some(get_feature_pos(&sconf, seed, reg_x, reg_z)),
+
+        // 化石无 region 配置（`get_config` 返回 `None`），正常不可达
+        Fossil => None,
 
         Monument | Mansion => Some(get_large_structure_pos(&sconf, seed, reg_x, reg_z)),
 

@@ -240,6 +240,19 @@ pub fn is_viable_feature_biome(mc: McVersion, stype: StructureType, biome_id: i3
             b == Some(EndHighlands)
         }
 
+        // 化石：vanilla 仅生成于沙漠/沼泽/红树林沼泽（1.20+）。
+        // 本库扩展（cubiomes 未覆盖），对齐 mcseedmap/chunkbase 前端行为。
+        Fossil => {
+            if mc <= McVersion::V1_19 {
+                return false;
+            }
+            matches!(b, Some(Desert | Swamp | MangroveSwamp))
+        }
+
+        // 废弃营地：网站前端只做位置散布、无群系过滤（26.3-s1+ 内容，
+        // vanilla 群系约束尚无公开证据），恒为可行。
+        AbandonedCamp => mc >= McVersion::V1_21,
+
         // C 中 exit(1) 的未实现类型：Feature / Geode / End_Island
         _ => false,
     }
@@ -754,6 +767,12 @@ fn overworld_viable_pos(
         }
 
         Mineshaft => 1,
+
+        // 废弃营地：网站前端无群系过滤，位置即候选即结果（1.21.4+）
+        AbandonedCamp => i32::from(mc >= McVersion::V1_21),
+
+        // 化石不走 region 散布；可行性由 `structure::fossil` 内部处理
+        Fossil => 0,
 
         // C 的 default 分支：未知类型/维度组合打印错误并视为不可行
         _ => 0,

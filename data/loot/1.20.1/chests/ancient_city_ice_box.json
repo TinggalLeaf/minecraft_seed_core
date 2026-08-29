@@ -1,0 +1,16 @@
+{
+  "_note": "Reconstructed from Minecraft Wiki documentation.",
+  "type": "minecraft:chest",
+  "pools": [
+    {
+      "rolls": {"min": 4.0, "max": 10.0, "type": "minecraft:uniform"},
+      "entries": [
+        {"type": "minecraft:item", "weight": 1, "name": "minecraft:suspicious_stew"},
+        {"type": "minecraft:item", "weight": 1, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 3.0, "type": "minecraft:uniform"}}], "name": "minecraft:golden_carrot"},
+        {"type": "minecraft:item", "weight": 1, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 3.0, "type": "minecraft:uniform"}}], "name": "minecraft:baked_potato"},
+        {"type": "minecraft:item", "weight": 2, "functions": [{"function": "minecraft:set_count", "count": {"min": 2.0, "max": 6.0, "type": "minecraft:uniform"}}], "name": "minecraft:packed_ice"},
+        {"type": "minecraft:item", "weight": 4, "functions": [{"function": "minecraft:set_count", "count": {"min": 2.0, "max": 8.0, "type": "minecraft:uniform"}}], "name": "minecraft:snowball"}
+      ]
+    }
+  ]
+}

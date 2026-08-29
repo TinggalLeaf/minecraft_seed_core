@@ -13,7 +13,8 @@
 | 末地群系 | 1.9 – 1.21.4 | simplex 高地噪声；更早版本填充 `the_end` |
 | 群系 scale 1（1:1） | 主世界全部支持版本、下界 1.16.1+ | B1.7- 由 beta 噪声路径直接生成（支持任意 2 的幂 scale）；B1.8–1.17 走 voronoi 缩放；末地 scale 1 已支持 |
 | large biomes 世界类型 | 主世界 B1.8 及以后 | `Generator::with_large_biomes(true)`（B1.7- 无此世界类型） |
-| 结构候选定位 `get_structure_pos` | 按结构类型见 `get_config` | 25 种 `StructureType` 的 spacing/separation/salt 配置表全版本快照验证 |
+| 结构候选定位 `get_structure_pos` | 按结构类型见 `get_config` | 27 种 `StructureType` 的 spacing/separation/salt 配置表全版本快照验证（含废弃营地 AbandonedCamp：salt=91231127 / region 34 / range 26，1.21.4+） |
+| 化石 `structure::fossil` | 1.20 及以后 | 逐区块双 salt（30000/30001，各 1/64）散布，与 mcseedmap/chunkbase 前端 JS 逐位一致（含其 JS `nextLong` 无符号拼接语义）；vanilla 群系过滤（沙漠/沼泽/红树林沼泽）由 `is_viable_feature_biome` 提供 |
 | 结构群系可行性 `is_viable_structure_pos` | B1.8 及以后 | 含 B1.8–1.17 的粗层剪枝模拟与 1.18+ 的变体采样点；B1.7- 不可用（C 同样只做了一半，调用会 panic） |
 | 结构变体 `get_variant` | 部分类型 | 村庄、堡垒、远古城市、废弃传送门、神殿/神庙/沼泽小屋、雪屋、紫晶洞、试炼密室、海底神殿 |
 | 结构部件生成 `get_end_city_pieces` / `get_fortress_pieces` / `get_house_list` | 末地城 1.9+、堡垒全版本、村庄 1.13- | 逐部件输出类型/位置/包围盒/朝向/depth；堡垒自动区分 ≤1.15 与 1.16+ 随机源路径 |
@@ -29,6 +30,7 @@
 | 种子搜索 `search::find_biomes` / `find_structures` / `find_biomes_with_structure` | 1.7 – 1.21.4 | 与网站 find_biomes/find_structures 语义逐一精确一致（含 48+16 位打包返回值） |
 | **Bedrock** 结构散布 `bedrock::structures_in_regions` / `find_structures` | 1.16.0 – 26.50 | 20 种 `BeStructureType`，region 网格 + MT19937 偏移，与网站 wasm 逐点一致 |
 | **Bedrock** 出生点 `bedrock::get_spawn` / 要塞 `bedrock::get_strongholds` | 与版本无关 | 只用种子低 32 位；要塞角度含 wasm 定制的 musl 变体 sin/cos |
+| 宝箱/战利品预测 `loot` 模块 | 数据版本 1.20.1（1.20.2–1.20.4 复用同一份数据） | 853 张原版 loot table（43 chests / 88 entities / 20 gameplay / 6 archaeology / 695 blocks / 1 empty）按版本目录组织（`data/loot/<version>/`、`src/loot/registry/v<version>.rs`；数据一致的版本只做 re-export 不复制）；种子→宝箱内容逐位对拍 Python 逆向参考实现；含解析概率/期望值统计与蒙特卡洛采样 |
 
 版本枚举为 `McVersion::B1_7` … `McVersion::V1_21`（含 `B1_8`、`V1_0` … `V1_6` 与 `V1_16_1`、`V1_19_2`、`V1_21_1`、`V1_21_3` 等细分项，对齐 cubiomes 的 `MCVersion`），`McVersion::name()` 给出如 `"b1.7.3"`、`"1.18.2"` 的字符串。
 
@@ -90,6 +92,11 @@ if let Some(pos) = get_structure_pos(StructureType::Village, McVersion::V1_20, 1
 - `cargo run --example bedrock_demo`：Bedrock 结构散布（含过滤版）、出生点、要塞。
 - `cargo run --example seed_search --release`：三种种子搜索 API（与网站语义一致）。
 - `cargo run --example perf_legacy --release`：旧版分层群系源的区域生成性能冒烟。
+- `cargo run --example seed_map`：chunkbase seed-map 功能总览（出生点/要塞/史莱姆区块/三维度群系/下界结构/化石/废弃营地）。
+- `cargo run --example fossil_camp`：化石逐区块散布（含群系过滤与版本门控）+ 废弃营地。
+- `cargo run --example chest_loot`：种子 + 坐标 → 宝箱内容预测（堡垒遗迹/下界要塞/废弃传送门）。
+- `cargo run --example loot_stats`：战利品表解析概率、蒙特卡洛统计、单物品命中率、时运掉落。
+- `cargo run --release --example perf_loot`：loot 查找/解析缓存/并行蒙特卡洛/并行结构扫描的性能实测。
 
 详细对接文档（坐标语义、错误/边界语义、性能建议、未覆盖清单）见 [docs/INTEGRATION.md](docs/INTEGRATION.md)。
 
@@ -110,6 +117,10 @@ golden 向量由 `reference/gen/` 下的 C 程序（`layervec.c`、`biomevec.c`�
 `tests/web_consistency.rs` 用**网站真实的 WASM 引擎**（`mcseedmap.com/workers/api.wasm`，即 cubiomes 的 Emscripten 编译产物）导出的输出做对拍：10 个版本 × 5 个种子的要塞坐标、64×64 群系区域（4096 个 id）、11 种结构的可行位置、出生点（网站 `find_spawn` = cubiomes `getSpawn`，本库 `get_spawn`）全部**逐一精确相等**。重新生成 golden 的方法：`node reference/site/dump_golden.mjs`（需要先从网站下载最新的 `api.wasm`，详见 docs/INTEGRATION.md「与 mcseedmap.com 的端到端一致性验证」一节）。
 
 `tests/bedrock_consistency.rs` 用网站的 Bedrock 引擎（`workers/bedrock.wasm`）做对拍：13 个版本 × 7 个种子的出生点、3 座要塞、15 种结构的 region 散布列表、全部配置表快照与 MT19937 原始向量全部**逐一精确相等**。重新生成 golden：`node reference/site/dump_bedrock_golden.mjs`。
+
+`tests/fossil_camp_golden.rs` 用 mcseedmap 前端 JS（`chunk-874.js` 的 stype=26/27 分支）的逐位复刻脚本做对拍：化石的双 salt 逐区块散布与废弃营地的 region 散布全部逐一精确相等。重新生成 golden：`node reference/site/dump_fossil_golden.mjs`。
+
+`tests/loot_consistency.rs` 用 Python 逆向参考项目（`E:\Projects\Minecraft\宝箱内容生成`）的输出做对拍：32 组用例（种子推导 5 种模式 × chests/blocks/entities/gameplay/archaeology）的种子与物品列表逐一精确相等。重新生成 golden：`python scripts/gen_golden.py > tests/loot_golden_data.rs`（在 Python 项目根目录运行）；注册表重生成：`python scripts/gen_registry.py > src/loot/registry/v1_20_1.rs`（若新版本数据与已有版本一致，不要复制——在 `src/loot/registry/` 下加 `v<version>.rs` re-export 即可，参照 `v1_20_4.rs`）。
 
 ## Bedrock 版支持
 

@@ -43,10 +43,20 @@ pub enum StructureType {
     EndIsland = 22,
     TrailRuins = 23,
     TrialChambers = 24,
+    /// 化石（1.20+，主世界沙漠/沼泽/红树林沼泽）。**不是** scattered
+    /// feature：无 region 散布，而是逐区块以双 salt（30000/30001）各
+    /// 1/64 概率判定（对齐 mcseedmap/chunkbase 前端实现），
+    /// [`get_config`] 对它返回 `None`；位置计算见
+    /// [`crate::structure::fossil`]。
+    Fossil = 25,
+    /// 废弃营地（网站标注 26.3-s1+，算法层 1.21.4+ 可用）。标准
+    /// scattered feature：salt=91231127、region 34、chunk range 26
+    /// （均匀分布），配置由 mcseedmap 前端 JS 逆向证实。
+    AbandonedCamp = 26,
 }
 
 /// `FEATURE_NUM`：结构类型总数。
-pub const FEATURE_NUM: usize = 25;
+pub const FEATURE_NUM: usize = 27;
 
 impl StructureType {
     /// 全部结构类型（按 C 枚举序）。
@@ -76,6 +86,8 @@ impl StructureType {
         StructureType::EndIsland,
         StructureType::TrailRuins,
         StructureType::TrialChambers,
+        StructureType::Fossil,
+        StructureType::AbandonedCamp,
     ];
 
     /// 从 C 枚举值转换（供 golden 测试对照）。
@@ -227,6 +239,9 @@ const S_END_ISLAND_116: StructureConfig =
     StructureConfig::c(0, 1, 1, StructureType::EndIsland, DIM_END, 14.0);
 const S_END_ISLAND: StructureConfig =
     StructureConfig::c(0, 1, 1, StructureType::EndIsland, DIM_END, 1.0 / 14.0);
+// 废弃营地（26.3-s1+；salt/region/range 由 mcseedmap 前端 JS 逆向证实）
+const S_ABANDONED_CAMP: StructureConfig =
+    StructureConfig::c(91231127, 34, 26, StructureType::AbandonedCamp, 0, 0.0);
 
 /// `getStructureConfig`：取指定版本下某结构类型的配置。
 ///
@@ -440,6 +455,19 @@ pub fn get_config(stype: StructureType, mc: McVersion) -> Option<StructureConfig
                 return None;
             }
             S_TRIAL_CHAMBERS
+        }
+        Fossil => {
+            // 化石是逐区块散布（双 salt 各 1/64），无法用 region 化的
+            // StructureConfig 表达；位置计算见 `structure::fossil`。
+            return None;
+        }
+        AbandonedCamp => {
+            // 网站 UI 门控在 26.3-s1，但底层算法对 mc >= 28（1.21.4+）
+            // 可用（mcseedmap chunk-874.js 已证实）。
+            if mc < McVersion::V1_21 {
+                return None;
+            }
+            S_ABANDONED_CAMP
         }
     };
     Some(conf)

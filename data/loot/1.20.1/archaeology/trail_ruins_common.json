@@ -1,0 +1,29 @@
+{
+  "_note": "Reconstructed from Minecraft Wiki archaeology documentation (1.20.1).",
+  "type": "minecraft:archaeology",
+  "random_sequence": "minecraft:archaeology/trail_ruins_common",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:emerald"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:wheat"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:wooden_hoe"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:clay_ball"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:brick"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:yellow_dye"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:blue_dye"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:light_blue_dye"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:white_dye"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:orange_dye"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:red_candle"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:green_candle"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:purple_candle"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:brown_candle"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:flow_pottery_sherd"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:guster_pottery_sherd"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:scrape_pottery_sherd"}
+      ]
+    }
+  ]
+}

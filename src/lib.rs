@@ -19,12 +19,14 @@
 //!   高速搜索（quadbase）。
 //! - [`bedrock`]：Bedrock 版计算（MT19937、结构散布、出生点、要塞，
 //!   对齐网站 `bedrock.wasm`）。
+//! - [`loot`]：原版战利品表引擎（按版本分类），1:1 移植 Python 参考实现。
 //!
 //! 每个版本的差异封装在 `generator::v*` 与 `structure` 的版本分派中，
 //! 新增版本只需增加一个模块与枚举项。
 
 pub mod bedrock;
 pub mod biome;
+pub mod loot;
 pub mod rng;
 pub mod version;
 pub mod noise;

@@ -57,4 +57,24 @@ fn main() {
         }
     }
     println!("regions={}x{} candidates={candidates} viable={viable}", 2 * REG_R + 1, 2 * REG_R + 1);
+
+    // 4) 废弃矿井：不走 region 网格，逐区块 0.4% 概率（1.13+）
+    let mut buf = [minecraft_seed_core::structure::Pos::default(); 8];
+    let n = minecraft_seed_core::structure::get_mineshafts(
+        mc, seed, -16, -16, 15, 15, Some(&mut buf),
+    );
+    println!("\n废弃矿井（±256 方块内共 {n} 处，前 8）：");
+    for p in buf.iter().take(n.min(8) as usize) {
+        println!("  mineshaft @ ({}, {})", p.x, p.z);
+    }
+
+    // 5) 并行扫描：结果与单线程一致，多核加速
+    let villages_par = minecraft_seed_core::structure::find_structures_par(
+        stype, mc, Dimension::Overworld, seed, -REG_R..=REG_R, -REG_R..=REG_R, 0,
+    );
+    let villages_par8 = minecraft_seed_core::structure::find_structures_par(
+        stype, mc, Dimension::Overworld, seed, -REG_R..=REG_R, -REG_R..=REG_R, 8,
+    );
+    assert_eq!(villages_par, villages_par8);
+    println!("\nfind_structures_par：单线程与 8 线程结果一致（{} 个可行村庄）", villages_par.len());
 }

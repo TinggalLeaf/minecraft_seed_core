@@ -9,3 +9,11 @@ categories = ["algorithms", "game-development", "simulation"]
 readme = "README.md"
 
 [dependencies]
+
+# 体积与速度优化：fat LTO + 单编译单元 + 剥离符号。
+# 注意：profile 只在顶层构建（本 crate 的 examples/tests 或直接构建
+# 二进制）时生效；作为依赖被引用时由使用方的 profile 决定。
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"

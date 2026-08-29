@@ -71,6 +71,8 @@ fn stype(n: i32) -> StructureType {
         StructureType::EndIsland,
         StructureType::TrailRuins,
         StructureType::TrialChambers,
+        StructureType::Fossil,
+        StructureType::AbandonedCamp,
     ];
     ALL[n as usize]
 }

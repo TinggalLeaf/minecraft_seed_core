@@ -1,0 +1,13 @@
+{
+  "_note": "Reconstructed from Minecraft Wiki (1.20.1). Sniffer egg item dropped when a sniffer digs up a torchflower or pitcher plant seed block.",
+  "type": "minecraft:archaeology",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {"type": "minecraft:item", "name": "minecraft:torchflower_seeds"},
+        {"type": "minecraft:item", "name": "minecraft:pitcher_pod"}
+      ]
+    }
+  ]
+}

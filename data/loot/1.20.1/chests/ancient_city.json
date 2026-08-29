@@ -1,0 +1,44 @@
+{
+  "_note": "Manually reconstructed from Minecraft Wiki documentation (1.19-1.20.1 era). The actual weight totals match the wiki-reported drop probabilities. For exact byte-for-byte reproduction, obtain from the vanilla data pack.",
+  "type": "minecraft:chest",
+  "pools": [
+    {
+      "rolls": {"min": 5.0, "max": 10.0, "type": "minecraft:uniform"},
+      "entries": [
+        {"type": "minecraft:item", "weight": 1, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 2.0, "type": "minecraft:uniform"}}], "name": "minecraft:enchanted_golden_apple"},
+        {"type": "minecraft:item", "weight": 1, "name": "minecraft:music_disc_otherside"},
+        {"type": "minecraft:item", "weight": 1, "name": "minecraft:swift_sneak_enchanted"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:disc_fragment_5"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:echo_shard"},
+        {"type": "minecraft:item", "weight": 4, "functions": [{"function": "minecraft:set_count", "count": {"min": 4.0, "max": 10.0, "type": "minecraft:uniform"}}], "name": "minecraft:sculk"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:sculk_sensor"},
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:sculk_catalyst"},
+        {"type": "minecraft:item", "weight": 8, "functions": [{"function": "minecraft:set_count", "count": {"min": 2.0, "max": 6.0, "type": "minecraft:uniform"}}], "name": "minecraft:amethyst_shard"},
+        {"type": "minecraft:item", "weight": 8, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 3.0, "type": "minecraft:uniform"}}], "name": "minecraft:glow_berries"},
+        {"type": "minecraft:item", "weight": 8, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 4.0, "type": "minecraft:uniform"}}], "name": "minecraft:candle"},
+        {"type": "minecraft:item", "weight": 10, "functions": [{"function": "minecraft:set_count", "count": {"min": 2.0, "max": 6.0, "type": "minecraft:uniform"}}], "name": "minecraft:coal"},
+        {"type": "minecraft:item", "weight": 10, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 6.0, "type": "minecraft:uniform"}}], "name": "minecraft:bone"},
+        {"type": "minecraft:item", "weight": 10, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 4.0, "type": "minecraft:uniform"}}], "name": "minecraft:soul_torch"},
+        {"type": "minecraft:item", "weight": 10, "functions": [{"function": "minecraft:set_count", "count": {"min": 1.0, "max": 3.0, "type": "minecraft:uniform"}}], "name": "minecraft:book"},
+        {"type": "minecraft:item", "weight": 8, "name": "minecraft:compass"},
+        {"type": "minecraft:item", "weight": 8, "name": "minecraft:name_tag"},
+        {"type": "minecraft:item", "weight": 8, "name": "minecraft:lead"},
+        {"type": "minecraft:item", "weight": 8, "name": "minecraft:saddle"},
+        {"type": "minecraft:item", "weight": 3, "name": "minecraft:diamond_horse_armor"},
+        {"type": "minecraft:item", "weight": 15, "name": "minecraft:music_disc_13"},
+        {"type": "minecraft:item", "weight": 15, "name": "minecraft:music_disc_cat"},
+        {"type": "minecraft:item", "weight": 3, "functions": [{"function": "minecraft:enchant_randomly"}], "name": "minecraft:diamond_leggings"},
+        {"type": "minecraft:item", "weight": 5, "functions": [{"function": "minecraft:enchant_randomly"}], "name": "minecraft:iron_leggings"},
+        {"type": "minecraft:item", "weight": 6, "name": "minecraft:experience_bottle"},
+        {"type": "minecraft:item", "weight": 1, "functions": [{"function": "minecraft:set_damage", "damage": {"min": 0.5, "max": 0.9, "type": "minecraft:uniform"}}, {"function": "minecraft:enchant_randomly"}], "name": "minecraft:diamond_hoe"}
+      ]
+    },
+    {
+      "rolls": 1,
+      "entries": [
+        {"type": "minecraft:item", "weight": 4, "name": "minecraft:ward_armor_trim_smithing_template"},
+        {"type": "minecraft:item", "weight": 1, "name": "minecraft:silence_armor_trim_smithing_template"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "_note": "Reconstructed from Minecraft Wiki archaeology documentation (1.20.1).",
+  "type": "minecraft:archaeology",
+  "random_sequence": "minecraft:archaeology/desert_pyramid",
+  "pools": [
+    {
+      "rolls": 1,
+      "entries": [
+        {"type": "minecraft:item", "weight": 2, "name": "minecraft:archer_pottery_sherd"},
+        {"type": "minecraft:item", "weight": 2, "name": "minecraft:prize_pottery_sherd"},
+        {"type": "minecraft:item", "weight": 2, "name": "minecraft:skull_pottery_sherd"},
+        {"type": "minecraft:item", "weight": 1, "name": "minecraft:emerald"},
+        {"type": "minecraft:item", "weight": 1, "name": "minecraft:diamond"},
+        {"type": "minecraft:item", "weight": 1, "name": "minecraft:gunpowder"}
+      ]
+    }
+  ]
+}

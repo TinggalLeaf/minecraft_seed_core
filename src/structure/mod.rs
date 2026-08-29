@@ -21,6 +21,7 @@
 //! 未移植项：`biomfilter.c`。
 
 pub mod config;
+pub mod fossil;
 pub mod gateway;
 pub mod pieces;
 pub mod quadbase;
@@ -31,6 +32,7 @@ pub mod variant;
 pub mod viability;
 
 pub use config::{get_config, StructureConfig, StructureType, FEATURE_NUM};
+pub use fossil::{get_fossil_positions, scan_fossils, FOSSIL_RARITY, FOSSIL_SALTS};
 pub use gateway::{
     get_linked_gateway_chunk, get_linked_gateway_pos, map_end_island_height,
 };
@@ -56,6 +58,99 @@ pub use viability::{
     biome_exists, is_end_chunk_empty, is_overworld, is_viable_end_city_terrain,
     is_viable_feature_biome, is_viable_structure_pos, is_viable_structure_terrain,
 };
+
+// ============================================================================
+// 并行结构扫描
+// ============================================================================
+
+use crate::generator::Generator;
+use crate::version::{Dimension, McVersion};
+
+/// 并行扫描 region 范围内的**可行**结构位置（候选 + 群系可行性过滤）。
+///
+/// 等价于对每个 region 调用 [`get_structure_pos`] + [`is_viable_structure_pos`]，
+/// 但按 `reg_z` 条纹切分到 `threads` 个线程，每线程持有独立的
+/// [`Generator`]（Generator 非 `Sync`，不能跨线程共享）。返回顺序与
+/// 单线程 `(rz, rx)` 行优先遍历一致。
+///
+/// 零依赖（仅 std）。`threads <= 1` 时退化为单线程。
+///
+/// ```
+/// use minecraft_seed_core::{Dimension, McVersion, StructureType};
+/// use minecraft_seed_core::structure::find_structures_par;
+///
+/// // 1.21.4 主世界 ±4 region 内的村庄
+/// let villages = find_structures_par(
+///     StructureType::Village, McVersion::V1_21, Dimension::Overworld,
+///     12345, -4..=4, -4..=4, 4,
+/// );
+/// assert!(!villages.is_empty());
+/// ```
+pub fn find_structures_par(
+    stype: config::StructureType,
+    mc: McVersion,
+    dim: Dimension,
+    seed: u64,
+    reg_x: std::ops::RangeInclusive<i32>,
+    reg_z: std::ops::RangeInclusive<i32>,
+    threads: usize,
+) -> Vec<region::Pos> {
+    let (rx0, rx1) = (*reg_x.start(), *reg_x.end());
+    let (rz0, rz1) = (*reg_z.start(), *reg_z.end());
+    let n_rz = (rz1 - rz0 + 1).max(0) as usize;
+    if threads <= 1 || n_rz < 2 {
+        let g = Generator::new(mc).with_seed(dim, seed);
+        return scan_stripe(stype, &g, seed, rx0, rx1, rz0, rz1);
+    }
+    let threads = threads.min(n_rz);
+    let chunk = n_rz.div_ceil(threads);
+    let mut parts = Vec::with_capacity(threads);
+    std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(threads);
+        for t in 0..threads {
+            let z0 = rz0 + (t * chunk) as i32;
+            let z1 = (z0 + chunk as i32 - 1).min(rz1);
+            if z0 > z1 {
+                break;
+            }
+            handles.push(s.spawn(move || {
+                let g = Generator::new(mc).with_seed(dim, seed);
+                scan_stripe(stype, &g, seed, rx0, rx1, z0, z1)
+            }));
+        }
+        for h in handles {
+            parts.push(h.join().unwrap());
+        }
+    });
+    let mut out = Vec::new();
+    for part in parts {
+        out.extend(part);
+    }
+    out
+}
+
+/// 单条纹扫描（[`find_structures_par`] 的工作单元）。
+fn scan_stripe(
+    stype: config::StructureType,
+    g: &Generator,
+    seed: u64,
+    rx0: i32,
+    rx1: i32,
+    rz0: i32,
+    rz1: i32,
+) -> Vec<region::Pos> {
+    let mut out = Vec::new();
+    for rz in rz0..=rz1 {
+        for rx in rx0..=rx1 {
+            if let Some(pos) = region::get_structure_pos(stype, g.version(), seed, rx, rz) {
+                if viability::is_viable_structure_pos(stype, g, pos.x, pos.z, 0) != 0 {
+                    out.push(pos);
+                }
+            }
+        }
+    }
+    out
+}
 
 #[cfg(test)]
 mod tests;
